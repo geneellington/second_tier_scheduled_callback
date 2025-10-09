@@ -293,7 +293,13 @@
         const tab = document.createElement('button');
         tab.className = 'day-tab' + (iso===activeDateISO ? ' active' : '');
         tab.textContent = human(d) + (i===0 ? ' (Today)' : '');
-        tab.onclick = () => { activeDateISO = iso; renderTabs(); renderSlots(true); renderEntriesTable(); };
+        tab.onclick = async () => {
+          activeDateISO = iso;
+          renderTabs();
+          await refreshCalendarFromAPI();   // <<< NEW: get API entries for the selected day
+          renderSlots(true);
+          renderEntriesTable();
+        };
         dayTabs.appendChild(tab);
       }
     }
@@ -446,6 +452,32 @@
 
     function escapeHtml(s){ return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c])); }
 
+   
+    // --- Bridge: map API items -> calendar "allEvents" shape (used by renderSlots)
+    function apiItemToCalendarEvent(e) {
+      return {
+        id: e.id,
+        date: e.date,                 // day string, e.g., "2025-10-09"
+        time: e.time,                 // already local (TZ shim rewrites listEntries)
+        name: e.customer || "",       // show customer name on the chip
+        phone: e.phone || "",
+        comments: e.notes || "",
+        createdAt: e.createdAt || ""
+      };
+    }
+
+    // Fetch entries for the active day from API and refresh global allEvents
+    async function refreshCalendarFromAPI() {
+      try {
+        const items = await Api.listEntries(activeDateISO); // TZ shim returns local times
+        allEvents = (Array.isArray(items) ? items : []).map(apiItemToCalendarEvent);
+      } catch (err) {
+        console.error("[Calendar] Failed to load from API", err);
+        allEvents = [];
+      }
+    }
+
+
     // ================= Controls =================
     loadBtn.onclick = async () => {
       try {
@@ -466,9 +498,10 @@
 
     // ================= Init =================
     (async function init(){
-      allEvents = await DataStore.list();
+//      allEvents = await DataStore.list();
       capacityMap = buildExampleCapacity();
       renderTabs();
+      await refreshCalendarFromAPI();
       renderSlots(true);
       renderEntriesTable();
       setStatus('Using example capacity. Load your capacity.json to override.');
@@ -481,15 +514,135 @@
     <button id="refresh">Refresh</button>
   </div>
 
-  <!-- API Create form -->
-  <form id="createForm" class="toolbar">
+  <!-- Create form -->
+  <form id="createForm" class="toolbar" novalidate>
     <input name="time" type="time" step="600" required />
     <input name="durationMin" type="number" min="10" step="10" value="10" required />
     <input name="agentId" placeholder="Agent ID" required />
     <input name="customer" placeholder="Customer" />
     <input name="notes" placeholder="Notes" style="min-width:220px" />
-    <button type="submit">Create</button>
+    <button id="createBtn" type="submit">Create</button>
   </form>
+
+  <script>
+    // === Single submit handler (no double-submit) + TZ→UTC conversion ===
+    (function () {
+      if (window.__createWired) return;
+      window.__createWired = true;
+
+      const form  = document.getElementById("createForm");
+      const btn   = document.getElementById("createBtn");
+      const dayEl = document.getElementById("day");
+
+      if (!form || !dayEl) { console.warn("[Create] form/day not found"); return; }
+
+      function ensure10m(hhmm) {
+        const m = String(hhmm || "").match(/^(\d{2}):(\d{2})$/);
+        return m && Number(m[2]) % 10 === 0;
+      }
+
+      // turn local date+time in selected TZ into a UTC ISO string
+      function toUTCISOFromSelectedTZ(dateYYYYMMDD, hhmm) {
+        const tz = (typeof getSelectedTZ === "function") ? getSelectedTZ() : "UTC";
+        const localWall = new Date(`${dateYYYYMMDD}T${hhmm}:00`);
+
+        // Convert a system-local Date that represents the desired WALL TIME
+        // into the actual UTC instant for that wall time in the selected TZ.
+        // (MDN “zonedTimeToUtc” pattern)
+        const inv = new Date(localWall.toLocaleString('en-US', { timeZone: tz }));
+        const diff = localWall.getTime() - inv.getTime();
+        const utcInstant = new Date(localWall.getTime() + diff);
+
+        return utcInstant.toISOString(); // e.g., "2025-10-09T23:50:00.000Z"
+      }
+
+
+
+      async function doCreate(e) {
+        e.preventDefault();
+        if (btn) { btn.disabled = true; btn.textContent = "Creating…"; }
+
+        try {
+          const fd     = new FormData(form);
+          const localD = dayEl.value;                // YYYY-MM-DD (selected in the Day picker)
+          const localT = fd.get("time");             // HH:mm from the form (10-min step)
+          const dur    = Number(fd.get("durationMin") || 10);
+          const agent  = fd.get("agentId");
+          const cust   = fd.get("customer") || "";
+          const notes  = fd.get("notes") || "";
+
+          if (!ensure10m(localT)) {
+            alert("Time must be 10-minute aligned (e.g., 14:30, 14:40).");
+            return;
+          }
+
+          // Convert local (in selected TZ) → UTC
+          const iso = toUTCISOFromSelectedTZ(localD, localT); // e.g., "2025-10-09T20:40:00Z"
+          const d   = new Date(iso);                          // UTC instant
+          const utcDate = [
+            d.getUTCFullYear(),
+            String(d.getUTCMonth()+1).padStart(2,"0"),
+            String(d.getUTCDate()).padStart(2,"0")
+          ].join("-");
+          const utcTime = [
+            String(d.getUTCHours()).padStart(2,"0"),
+            String(d.getUTCMinutes()).padStart(2,"0")
+          ].join(":");
+
+          const payload = {
+            // send UTC values to backend
+            date: utcDate,
+            time: utcTime,
+            durationMin: dur,
+            agentId: agent,
+            customer: cust,
+            notes,
+            // include scheduledAt for clarity (backend can ignore or use)
+            scheduledAt: iso
+          };
+
+          console.log("[Create] tz→utc", {
+            selectedTZ: (typeof getSelectedTZ === "function") ? getSelectedTZ() : "(unknown)",
+            localDate: localD, localTime: localT, scheduledAtUTC: iso,
+            sending: { date: utcDate, time: utcTime }
+          });
+
+          console.log("[Create] send payload", payload);
+
+          const created = await Api.createEntry(payload);
+          console.log("[Create] API OK →", created);
+
+          // Keep selected day after reset
+          form.reset();
+          dayEl.value = localD;
+
+          // Refresh UI (calendar + table)
+          if (typeof refreshCalendarFromAPI === "function") await refreshCalendarFromAPI();
+          if (typeof loadDay === "function") await loadDay();
+
+          // Optional: status line; comment this out if you dislike popups
+          alert("Created entry at " + localT + " (" + utcTime + " UTC)");
+        } catch (err) {
+          console.error("[Create] failed:", err);
+          alert("Create failed: " + (err?.message || err));
+        } finally {
+          if (btn) { btn.disabled = false; btn.textContent = "Create"; }
+        }
+      }
+
+      // Ensure we only wire one handler
+      form.addEventListener("submit", doCreate);
+      console.log("[Create] handler attached (tz→utc)");
+    })();
+  </script>
+  
+
+
+  <div class="toolbar">
+  <label>Day: <input id="day" type="date" /></label>
+  <button id="refresh">Refresh</button>
+  </div>
+
 
   <!-- API Entries table -->
   <table id="entriesTable" style="width:100%;border-collapse:collapse" border="1" cellpadding="6">
@@ -612,29 +765,6 @@
       });
     }
 
-    // Create (local input → UTC via CREATE SHIM below)
-    createForm.addEventListener("submit", async (e) => {
-      e.preventDefault();
-      const fd = new FormData(createForm);
-      const date = dayEl.value;
-      const time = fd.get("time");
-      if (!ensure10m(time)) return alert("Time must be 10-minute aligned (e.g., 14:30, 14:40).");
-      const payload = {
-        date,
-        time,
-        durationMin: Number(fd.get("durationMin") || 10),
-        agentId: fd.get("agentId"),
-        customer: fd.get("customer") || "",
-        notes: fd.get("notes") || ""
-      };
-      try {
-        await Api.createEntry(payload);
-        createForm.reset();
-        await loadDay();
-      } catch (err) {
-        alert("Create failed: " + err.message);
-      }
-    });
 
     // Edit modal submit
     editCancel.addEventListener("click", hideModal);
@@ -674,7 +804,7 @@
   </script>
 
   <!-- KEEP: CREATE SHIM (local date/time → UTC for API) -->
-  <script>
+  <!--<script>
   (function () {
     if (!window.Api || !window.localToUTCISO) return;
     const originalCreate = window.Api.createEntry;
@@ -699,6 +829,6 @@
       return originalCreate(entry);
     };
   })();
-  </script>
+  </script> -->
 </body>
 </html>
