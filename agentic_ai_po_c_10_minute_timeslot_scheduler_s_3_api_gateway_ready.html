@@ -293,7 +293,13 @@
         const tab = document.createElement('button');
         tab.className = 'day-tab' + (iso===activeDateISO ? ' active' : '');
         tab.textContent = human(d) + (i===0 ? ' (Today)' : '');
-        tab.onclick = () => { activeDateISO = iso; renderTabs(); renderSlots(true); renderEntriesTable(); };
+        tab.onclick = async () => {
+          activeDateISO = iso;
+          renderTabs();
+          await refreshCalendarFromAPI();   // <<< NEW: get API entries for the selected day
+          renderSlots(true);
+          renderEntriesTable();
+        };
         dayTabs.appendChild(tab);
       }
     }
@@ -446,6 +452,32 @@
 
     function escapeHtml(s){ return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c])); }
 
+   
+    // --- Bridge: map API items -> calendar "allEvents" shape (used by renderSlots)
+    function apiItemToCalendarEvent(e) {
+      return {
+        id: e.id,
+        date: e.date,                 // day string, e.g., "2025-10-09"
+        time: e.time,                 // already local (TZ shim rewrites listEntries)
+        name: e.customer || "",       // show customer name on the chip
+        phone: e.phone || "",
+        comments: e.notes || "",
+        createdAt: e.createdAt || ""
+      };
+    }
+
+    // Fetch entries for the active day from API and refresh global allEvents
+    async function refreshCalendarFromAPI() {
+      try {
+        const items = await Api.listEntries(activeDateISO); // TZ shim returns local times
+        allEvents = (Array.isArray(items) ? items : []).map(apiItemToCalendarEvent);
+      } catch (err) {
+        console.error("[Calendar] Failed to load from API", err);
+        allEvents = [];
+      }
+    }
+
+
     // ================= Controls =================
     loadBtn.onclick = async () => {
       try {
@@ -466,9 +498,10 @@
 
     // ================= Init =================
     (async function init(){
-      allEvents = await DataStore.list();
+//      allEvents = await DataStore.list();
       capacityMap = buildExampleCapacity();
       renderTabs();
+      await refreshCalendarFromAPI();
       renderSlots(true);
       renderEntriesTable();
       setStatus('Using example capacity. Load your capacity.json to override.');
@@ -481,7 +514,7 @@
     <button id="refresh">Refresh</button>
   </div>
 
-  <!-- API Create form -->
+  <!-- Create form -->
   <form id="createForm" class="toolbar">
     <input name="time" type="time" step="600" required />
     <input name="durationMin" type="number" min="10" step="10" value="10" required />
@@ -490,6 +523,12 @@
     <input name="notes" placeholder="Notes" style="min-width:220px" />
     <button type="submit">Create</button>
   </form>
+
+  <div class="toolbar">
+  <label>Day: <input id="day" type="date" /></label>
+  <button id="refresh">Refresh</button>
+  </div>
+
 
   <!-- API Entries table -->
   <table id="entriesTable" style="width:100%;border-collapse:collapse" border="1" cellpadding="6">
@@ -630,11 +669,13 @@
       try {
         await Api.createEntry(payload);
         createForm.reset();
-        await loadDay();
+        await refreshCalendarFromAPI();   // <<< add this so the scrolling calendar updates
+        await loadDay();                  // table stays in sync
       } catch (err) {
         alert("Create failed: " + err.message);
       }
     });
+
 
     // Edit modal submit
     editCancel.addEventListener("click", hideModal);
