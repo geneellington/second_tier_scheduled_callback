@@ -4,11 +4,8 @@
   <link rel="icon" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMB/VMKcLcAAAAASUVORK5CYII=" />
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>PoC – 10‑Minute Timeslot Scheduler (Capacity + Entries Table)</title>
+  <title>PoC – 10-Minute Timeslot Scheduler (Capacity + Entries Table)</title>
   <style>
-    /* =============================
-       THEME & LAYOUT
-       ============================= */
     :root {
       --bg: #f7f7f9;
       --card: #ffffff;
@@ -19,13 +16,12 @@
       --ok: #18a558;
       --warn: #e6b800;
       --full: #d93025;
-      --slot-h: 32px; /* height of each 10-min slot */
+      --slot-h: 32px;
     }
     html, body { height: 100%; }
     body { margin: 0; background: var(--bg); color: var(--ink); font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; }
     .app { max-width: 1180px; margin: 0 auto; padding: 18px; display: grid; gap: 12px; }
 
-    /* Toolbar */
     .toolbar { display: grid; grid-template-columns: 1fr auto; gap: 10px; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px; align-items: center; }
     .title { font-weight: 700; }
     .controls { display: flex; gap: 8px; align-items: center; }
@@ -33,27 +29,23 @@
     .btn { padding: 8px 12px; border-radius: 8px; border: 1px solid var(--line); background: #f2f4ff; color: var(--ink); cursor: pointer; }
     .btn.brand { background: var(--brand); color: #fff; border: none; }
 
-    /* Day tabs */
     .day-tabs { display: flex; flex-wrap: wrap; gap: 8px; }
     .day-tab { background: var(--card); border: 1px solid var(--line); padding: 8px 10px; border-radius: 8px; cursor: pointer; color: var(--muted); }
     .day-tab.active { color: var(--ink); border-color: var(--brand); box-shadow: 0 0 0 1px var(--brand) inset; }
 
-    /* Calendar grid: left hourly labels, right 10-min slots */
     .calendar { background: var(--card); border: 1px solid var(--line); border-radius: 10px; display: grid; grid-template-columns: 90px 1fr; overflow: hidden; height: 620px; }
     .time-labels { border-right: 1px solid var(--line); overflow-y: auto; background: #fafbff; }
     .slots { overflow-y: auto; }
 
-    /* Hour label covers 6 x 10-minute rows */
     .hour-label { height: calc(var(--slot-h) * 6); display: grid; align-items: start; padding: 6px 8px; border-bottom: 1px solid var(--line); font-size: 12px; color: var(--muted); }
 
-    /* Each 10-minute slot */
     .slot { height: var(--slot-h); display: grid; align-items: center; border-bottom: 1px solid var(--line); grid-template-columns: 90px 110px 1fr; gap: 8px; padding: 0 8px; }
     .slot:hover { background: #f7faff; }
     .slot-time { font-size: 12px; color: var(--ink); }
     .slot-cap { font-size: 12px; padding: 2px 8px; border-radius: 999px; width: max-content; }
     .cap-ok { background: rgba(24,165,88,0.12); color: var(--ok); border: 1px solid rgba(24,165,88,0.35); }
     .cap-warn { background: rgba(230,184,0,0.12); color: #a87b00; border: 1px solid rgba(230,184,0,0.35); }
-    .cap-full { background: rgba(217,48,37,0.12); color: var(--full); border: 1px solid rgba(217,48,37,0.35); }
+    .cap-full { background: rgba(217,48,37,0.12); color: var(--full); border: 1px solid rgba(217,48,37,0,0.35); }
 
     .chips { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
     .chip { font-size: 11px; background: #f2f4ff; border: 1px solid var(--line); padding: 2px 6px; border-radius: 6px; }
@@ -61,12 +53,10 @@
 
     .status { font-size: 12px; color: var(--muted); padding: 4px 2px 0; }
 
-    /* Table */
     table { width: 100%; border-collapse: collapse; }
     th, td { text-align: left; padding: 8px; border-bottom: 1px solid var(--line); font-size: 14px; }
     thead tr { background: #f6f7ff; }
 
-    /* Modal */
     .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.4); display: none; align-items: center; justify-content: center; z-index: 50; }
     .modal { width: 520px; max-width: 92vw; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; }
     .modal h3 { margin: 0 0 8px; }
@@ -78,44 +68,91 @@
     .actions { display: flex; gap: 8px; justify-content: flex-end; }
   </style>
 
-<!-- API client for your live API Gateway -->
-<script>
-(function () {
-  const BASE = "https://f36ru2h4ua.execute-api.us-east-1.amazonaws.com/prod";
-
-  async function fetchJSON(url, options = {}) {
-    const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
-    const res = await fetch(url, { ...options, headers });
-    const text = await res.text();
-    let data = null;
-    try { data = text ? JSON.parse(text) : null; } catch {}
-    if (!res.ok) throw new Error(data?.error || data?.message || res.statusText);
-    return data;
-  }
-  function qs(params) {
-    const p = new URLSearchParams();
-    Object.entries(params).forEach(([k, v]) => (v != null && v !== "") && p.append(k, v));
-    return p.toString();
-  }
-
-  window.Api = {
-    listEntries: (date, from, to) => fetchJSON(`${BASE}/entries?${qs({ date, from, to })}`),
-    createEntry: (entry)          => fetchJSON(`${BASE}/entries`, { method: "POST", body: JSON.stringify(entry) }),
-    replaceEntry: (id, entry)     => fetchJSON(`${BASE}/entries/${id}`, { method: "PUT", body: JSON.stringify(entry) }),
-    updateEntry: (id, patch)      => fetchJSON(`${BASE}/entries/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
-    deleteEntry: (id, date, time) => fetchJSON(`${BASE}/entries/${id}?${qs({ date, time })}`, { method: "DELETE" }),
-  };
-})();
-</script>
-
+  <!-- API client -->
+  <script>
+  (function () {
+    const BASE = "https://f36ru2h4ua.execute-api.us-east-1.amazonaws.com/prod";
+    async function fetchJSON(url, options = {}) {
+      const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
+      const res = await fetch(url, { ...options, headers });
+      const text = await res.text();
+      let data = null;
+      try { data = text ? JSON.parse(text) : null; } catch {}
+      if (!res.ok) throw new Error(data?.error || data?.message || res.statusText);
+      return data;
+    }
+    function qs(params) {
+      const p = new URLSearchParams();
+      Object.entries(params).forEach(([k, v]) => (v != null && v !== "") && p.append(k, v));
+      return p.toString();
+    }
+    window.Api = {
+      listEntries: (date, from, to) => fetchJSON(`${BASE}/entries?${qs({ date, from, to })}`),
+      createEntry: (entry)          => fetchJSON(`${BASE}/entries`, { method: "POST", body: JSON.stringify(entry) }),
+      replaceEntry: (id, entry)     => fetchJSON(`${BASE}/entries/${id}`, { method: "PUT", body: JSON.stringify(entry) }),
+      updateEntry: (id, patch)      => fetchJSON(`${BASE}/entries/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
+      deleteEntry: (id, date, time) => fetchJSON(`${BASE}/entries/${id}?${qs({ date, time })}`, { method: "DELETE" }),
+    };
+  })();
+  </script>
 </head>
+
 <body>
+  <!-- Timezone toolbar -->
+  <div id="toolbar" style="display:flex;gap:12px;align-items:center;padding:10px;border-bottom:1px solid #ddd;background:#f9fafb;">
+    <strong style="font-size:14px;">Settings</strong>
+    <label for="tzSelect">Time zone:</label>
+    <select id="tzSelect" style="min-width:240px;"></select>
+  </div>
+
+  <script>
+  // Time zone dropdown + helpers
+  const DEFAULT_TZ = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  const TZ_KEY = "ui.timezone";
+  const TZ_LIST = ["UTC","America/New_York","America/Chicago","America/Denver","America/Los_Angeles","Europe/London","Europe/Berlin","Asia/Tokyo","Australia/Sydney"];
+
+  function getSelectedTZ() { return localStorage.getItem(TZ_KEY) || DEFAULT_TZ; }
+  function setSelectedTZ(tz) { localStorage.setItem(TZ_KEY, tz); }
+  function initTZDropdown() {
+    const sel = document.getElementById("tzSelect");
+    sel.innerHTML = "";
+    const chosen = getSelectedTZ();
+    TZ_LIST.forEach(tz => {
+      const opt = document.createElement("option");
+      opt.value = tz; opt.textContent = tz;
+      if (tz === chosen) opt.selected = true;
+      sel.appendChild(opt);
+    });
+    sel.addEventListener("change", () => {
+      setSelectedTZ(sel.value);
+      renderTabs();     // so “(Today)” recalculates against selected TZ if you add that later
+      renderSlots();    // relabel slots to new TZ
+      renderEntriesTable(); // relabel API table times
+    });
+  }
+  function formatUTCAsLocal(utcISOString, opts = {}) {
+    const tz = getSelectedTZ();
+    return new Intl.DateTimeFormat(undefined, { timeZone: tz, hour:"2-digit", minute:"2-digit", ...opts })
+      .format(new Date(utcISOString));
+  }
+  function localToUTCISO(dateYYYYMMDD, hhmm) {
+    const tz = getSelectedTZ();
+    const localInstant = new Date(`${dateYYYYMMDD}T${hhmm}:00`);
+    const utcLike = new Date(localInstant.toLocaleString("en-US", { timeZone: tz }));
+    return new Date(
+      new Intl.DateTimeFormat("en-CA", {
+        timeZone:"UTC", year:"numeric", month:"2-digit", day:"2-digit",
+        hour:"2-digit", minute:"2-digit", second:"2-digit", hour12:false
+      }).format(utcLike).replace(",","")
+    ).toISOString();
+  }
+  document.addEventListener("DOMContentLoaded", initTZDropdown);
+  </script>
+
   <div class="app">
-    <!-- =============================
-         TOOLBAR
-         ============================= -->
+    <!-- Toolbar -->
     <div class="toolbar">
-      <div class="title">PoC – 10‑Minute Timeslot Scheduler</div>
+      <div class="title">PoC – 10-Minute Timeslot Scheduler</div>
       <div class="controls">
         <input id="capacityPath" placeholder="capacity.json (YYYY-MM-DD -> HH:MM -> number)" />
         <button class="btn" id="loadBtn">Load Capacity</button>
@@ -123,14 +160,10 @@
       </div>
     </div>
 
-    <!-- =============================
-         DAY TABS
-         ============================= -->
+    <!-- Day tabs -->
     <div class="day-tabs" id="dayTabs"></div>
 
-    <!-- =============================
-         CALENDAR (Left: hourly labels; Right: 10-min slots)
-         ============================= -->
+    <!-- Calendar -->
     <div class="calendar">
       <div class="time-labels" id="timeLabels"></div>
       <div class="slots" id="slots"></div>
@@ -138,9 +171,7 @@
 
     <div class="status" id="status">Ready. Using example capacity. Load a capacity.json to override.</div>
 
-    <!-- =============================
-         ENTRIES TABLE
-         ============================= -->
+    <!-- Local DataStore “Entries for Selected Day” (unchanged data, we only relabel times) -->
     <div class="day-tabs" style="margin-top:6px;">
       <div class="title" style="font-weight:600;">Entries for Selected Day</div>
     </div>
@@ -148,11 +179,7 @@
       <table id="entriesTable">
         <thead>
           <tr>
-            <th>Time</th>
-            <th>Name</th>
-            <th>Phone</th>
-            <th>Comments</th>
-            <th>Actions</th>
+            <th>Time</th><th>Name</th><th>Phone</th><th>Comments</th><th>Actions</th>
           </tr>
         </thead>
         <tbody id="entriesTbody"></tbody>
@@ -160,53 +187,32 @@
     </div>
   </div>
 
-  <!-- =============================
-       ADD ENTRY MODAL
-       ============================= -->
+  <!-- Add Entry Modal -->
   <div class="modal-backdrop" id="backdrop" aria-hidden="true">
     <div class="modal" role="dialog" aria-modal="true">
       <h3 id="modalTitle">Add Entry</h3>
       <p class="muted" id="modalSub"></p>
       <form class="form" id="eventForm">
-        <div>
-          <label for="name">Customer name</label>
-          <input id="name" required placeholder="Jane Doe" />
-        </div>
-        <div>
-          <label for="phone">Phone</label>
-          <input id="phone" required placeholder="+1 555 0100" />
-        </div>
-        <div>
-          <label for="comments">Comments</label>
-          <textarea id="comments" placeholder="Optional notes"></textarea>
-        </div>
+        <div><label for="name">Customer name</label><input id="name" required placeholder="Jane Doe" /></div>
+        <div><label for="phone">Phone</label><input id="phone" required placeholder="+1 555 0100" /></div>
+        <div><label for="comments">Comments</label><textarea id="comments" placeholder="Optional notes"></textarea></div>
         <div class="actions">
           <button type="button" class="btn" id="cancelBtn">Cancel</button>
           <button type="submit" class="btn brand">Save</button>
         </div>
       </form>
-      <!-- Phase 2: swap DataStore with API Gateway → Lambda → DynamoDB -->
     </div>
   </div>
 
   <script>
-    // ==========================================================
-    //  UTILITIES
-    // ==========================================================
+    // ================= Utilities =================
     const pad = n => n.toString().padStart(2, '0');
     const today = new Date(); today.setHours(0,0,0,0);
     const toISO = d => d.toISOString().slice(0,10);
     const human = d => d.toLocaleDateString(undefined, { weekday:'short', month:'short', day:'numeric' });
+    function timeStrings(){ const out=[]; for(let h=0; h<24; h++) for(let m=0; m<60; m+=10) out.push(`${pad(h)}:${pad(m)}`); return out; }
 
-    function timeStrings(){
-      const out = [];
-      for(let h=0; h<24; h++) for(let m=0; m<60; m+=10) out.push(`${pad(h)}:${pad(m)}`);
-      return out;
-    }
-
-    // ==========================================================
-    //  DATA STORE (Phase 1: localStorage)
-    // ==========================================================
+    // ================= Local DataStore =================
     const DataStore = {
       key: 'poc_events_v1',
       async list(){ return JSON.parse(localStorage.getItem(this.key) || '[]'); },
@@ -214,11 +220,9 @@
       async remove(id){ const all = await this.list(); localStorage.setItem(this.key, JSON.stringify(all.filter(e=>e.id!==id))); },
     };
 
-    // ==========================================================
-    //  CAPACITY
-    // ==========================================================
-    let capacityMap = {};     // from capacity.json
-    let defaultCapacity = 1;  // change to 0 for strict
+    // ================= Capacity =================
+    let capacityMap = {};
+    let defaultCapacity = 1;
 
     async function loadCapacity(path){
       const res = await fetch(path, { cache:'no-store' });
@@ -228,7 +232,6 @@
       renderSlots();
       renderEntriesTable();
     }
-
     function buildExampleCapacity(){
       const ex = {};
       for(let i=0;i<5;i++){
@@ -238,27 +241,24 @@
         timeStrings().forEach(ts=>{
           const [hh] = ts.split(':').map(Number);
           let cap = 0;
-          if(hh>=9 && hh<12) cap = 2;       // morning
-          else if(hh>=12 && hh<14) cap = 1; // lunch
-          else if(hh>=14 && hh<17) cap = 3; // afternoon
-          else if(hh>=17 && hh<19) cap = 2; // early evening
-          else cap = 0;                      // off-hours
+          if(hh>=9 && hh<12) cap = 2;
+          else if(hh>=12 && hh<14) cap = 1;
+          else if(hh>=14 && hh<17) cap = 3;
+          else if(hh>=17 && hh<19) cap = 2;
+          else cap = 0;
           ex[iso][ts] = cap;
         });
       }
       return ex;
     }
-
     function capacityFor(dateISO, time){
       const day = capacityMap[dateISO] || {};
       const v = day[time];
       return typeof v === 'number' ? v : defaultCapacity;
     }
 
-    // ==========================================================
-    //  STATE & ELEMENTS
-    // ==========================================================
-    const DAYS = 5; // today + 4
+    // ================= State & Elements =================
+    const DAYS = 5;
     let activeDateISO = toISO(today);
     let allEvents = [];
 
@@ -281,14 +281,10 @@
     const commentsInput = document.getElementById('comments');
     const cancelBtn = document.getElementById('cancelBtn');
 
-    // Keep labels column in sync with slot scroll
     slotsEl.addEventListener('scroll', () => { timeLabels.scrollTop = slotsEl.scrollTop; });
-
     function setStatus(msg){ statusEl.textContent = msg; }
 
-    // ==========================================================
-    //  TABS
-    // ==========================================================
+    // ================= Tabs =================
     function renderTabs(){
       dayTabs.innerHTML = '';
       for(let i=0;i<DAYS;i++){
@@ -302,34 +298,25 @@
       }
     }
 
-    // ==========================================================
-    //  RENDER HOURLY LABELS (no 10-min duplicates)
-    // ==========================================================
+    // ================= Hour labels (localized display) =================
     function renderHourLabels(){
       timeLabels.innerHTML = '';
       for(let h=0; h<24; h++){
+        const utcISO = `${activeDateISO}T${pad(h)}:00:00Z`;     // treat as UTC anchor
+        const label  = formatUTCAsLocal(utcISO, { hour:"2-digit" }); // show as local hour
         const lab = document.createElement('div');
         lab.className = 'hour-label';
-        lab.textContent = `${pad(h)}:00`;
+        lab.textContent = `${label}:00`;
         timeLabels.appendChild(lab);
       }
     }
 
-    // ==========================================================
-    //  CALENDAR SLOTS
-    // ==========================================================
+    // ================= Slots =================
     function eventsFor(dateISO, time){ return allEvents.filter(e => e.date===dateISO && e.time===time); }
-
-    function capClass(used, cap){
-      if(cap === 0 || used >= cap) return 'cap-full';
-      if(used >= cap - 1) return 'cap-warn';
-      return 'cap-ok';
-    }
+    function capClass(used, cap){ if(cap === 0 || used >= cap) return 'cap-full'; if(used >= cap - 1) return 'cap-warn'; return 'cap-ok'; }
 
     function renderSlots(scrollToNow=false){
-      // Left: hourly labels (each spans 6 slots)
       renderHourLabels();
-      // Right: slots at 10-minute increments
       slotsEl.innerHTML = '';
       const times = timeStrings();
 
@@ -343,7 +330,9 @@
 
         const tcol = document.createElement('div');
         tcol.className = 'slot-time';
-        tcol.textContent = ts;
+        // DISPLAY ONLY: localized label from UTC instant for this date+time
+        const display = formatUTCAsLocal(`${activeDateISO}T${ts}:00Z`, { hour:"2-digit", minute:"2-digit" });
+        tcol.textContent = display;
 
         const capCol = document.createElement('div');
         capCol.className = `slot-cap ${capClass(used, cap)}`;
@@ -352,7 +341,6 @@
         const chips = document.createElement('div');
         chips.className = 'chips';
 
-        // Existing event chips with delete
         eventsFor(activeDateISO, ts).forEach(evt => {
           const chip = document.createElement('span');
           chip.className = 'chip';
@@ -370,7 +358,6 @@
           chips.appendChild(chip);
         });
 
-        // Double-click to add
         row.ondblclick = () => {
           if(cap <= 0 || used >= cap){
             alert('This timeslot is full or capacity is 0 for this time.');
@@ -395,41 +382,27 @@
       }
     }
 
-    // ==========================================================
-    //  MODAL & FORM
-    // ==========================================================
-    let ctx = null; // { dateISO, time }
-
+    // ================= Modal & Form =================
+    let ctx = null;
     function openModal(dateISO, time, used, cap){
       ctx = { dateISO, time };
       document.getElementById('modalTitle').textContent = `Add Entry for ${dateISO} ${time}`;
       document.getElementById('modalSub').textContent = `Capacity: ${used}/${cap}`;
-      nameInput.value = '';
-      phoneInput.value = '';
-      commentsInput.value = '';
-      backdrop.style.display = 'flex';
-      backdrop.setAttribute('aria-hidden','false');
-      nameInput.focus();
+      nameInput.value = ''; phoneInput.value = ''; commentsInput.value = '';
+      backdrop.style.display = 'flex'; backdrop.setAttribute('aria-hidden','false'); nameInput.focus();
     }
-    function closeModal(){
-      backdrop.style.display = 'none';
-      backdrop.setAttribute('aria-hidden','true');
-      ctx = null;
-    }
-
+    function closeModal(){ backdrop.style.display = 'none'; backdrop.setAttribute('aria-hidden','true'); ctx = null; }
     cancelBtn.onclick = closeModal;
     backdrop.addEventListener('click', (e)=>{ if(e.target === backdrop) closeModal(); });
 
     form.addEventListener('submit', async (e)=>{
-      e.preventDefault();
-      if(!ctx) return;
+      e.preventDefault(); if(!ctx) return;
       const { dateISO, time } = ctx;
       const name = nameInput.value.trim();
       const phone = phoneInput.value.trim();
       const comments = commentsInput.value.trim();
       if(!name || !phone){ alert('Name and phone are required.'); return; }
 
-      // Re-check capacity
       const used = eventsFor(dateISO, time).length;
       const cap = capacityFor(dateISO, time);
       if(used >= cap){ alert('This timeslot is now full.'); closeModal(); return; }
@@ -437,22 +410,22 @@
       const evt = { id: Math.random().toString(36).slice(2), date: dateISO, time, name, phone, comments, createdAt: new Date().toISOString() };
       await DataStore.save(evt);
       allEvents = await DataStore.list();
-      renderSlots();
-      renderEntriesTable();
-      closeModal();
+      renderSlots(); renderEntriesTable(); closeModal();
       setStatus(`Saved entry for ${name} @ ${dateISO} ${time}`);
     });
 
-    // ==========================================================
-    //  ENTRIES TABLE
-    // ==========================================================
+    // ================= “Entries for Selected Day” (local store) =================
     function renderEntriesTable(){
+      const tz = getSelectedTZ();
       const rows = allEvents
         .filter(e => e.date === activeDateISO)
         .sort((a,b)=> a.time.localeCompare(b.time))
         .map(e => {
+          // Show localized label but keep e.time in data attributes for actions
+          const iso = `${e.date}T${e.time}:00Z`;
+          const viewTime = formatUTCAsLocal(iso, { hour:"2-digit", minute:"2-digit" });
           return `<tr>
-            <td>${e.time}</td>
+            <td>${viewTime}</td>
             <td>${escapeHtml(e.name)}</td>
             <td>${escapeHtml(e.phone)}</td>
             <td>${escapeHtml(e.comments || '')}</td>
@@ -461,24 +434,19 @@
         });
       entriesTbody.innerHTML = rows.join('') || `<tr><td colspan="5" style="color:var(--muted);">No entries for this day.</td></tr>`;
 
-      // Wire delete buttons
       entriesTbody.querySelectorAll('button[data-id]').forEach(btn => {
         btn.onclick = async () => {
           const id = btn.getAttribute('data-id');
           await DataStore.remove(id);
           allEvents = await DataStore.list();
-          renderSlots();
-          renderEntriesTable();
-          setStatus('Entry removed.');
+          renderSlots(); renderEntriesTable(); setStatus('Entry removed.');
         };
       });
     }
 
     function escapeHtml(s){ return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c])); }
 
-    // ==========================================================
-    //  CONTROLS
-    // ==========================================================
+    // ================= Controls =================
     loadBtn.onclick = async () => {
       try {
         const path = capacityPath.value.trim();
@@ -486,7 +454,6 @@
         await loadCapacity(path);
       } catch(err){ alert(err.message); }
     };
-
     exportBtn.onclick = async () => {
       const data = await DataStore.list();
       const blob = new Blob([JSON.stringify(data, null, 2)], { type:'application/json' });
@@ -497,9 +464,7 @@
       setStatus('Exported events as JSON.');
     };
 
-    // ==========================================================
-    //  INIT
-    // ==========================================================
+    // ================= Init =================
     (async function init(){
       allEvents = await DataStore.list();
       capacityMap = buildExampleCapacity();
@@ -510,205 +475,230 @@
     })();
   </script>
 
-  <!-- Day picker + refresh -->
-<div class="toolbar">
-  <label>Day: <input id="day" type="date" /></label>
-  <button id="refresh">Refresh</button>
-</div>
-
-<!-- Create form -->
-<form id="createForm" class="toolbar">
-  <input name="time" type="time" step="600" required />
-  <input name="durationMin" type="number" min="10" step="10" value="10" required />
-  <input name="agentId" placeholder="Agent ID" required />
-  <input name="customer" placeholder="Customer" />
-  <input name="notes" placeholder="Notes" style="min-width:220px" />
-  <button type="submit">Create</button>
-</form>
-
-<!-- Entries table -->
-<table id="entriesTable" style="width:100%;border-collapse:collapse" border="1" cellpadding="6">
-  <thead>
-    <tr><th>Time</th><th>Duration</th><th>Agent</th><th>Customer</th><th>Notes</th><th>Actions</th></tr>
-  </thead>
-  <tbody></tbody>
-</table>
-
-<!-- Edit modal -->
-<div id="editModal" class="hidden" style="position:fixed;inset:0;background:rgba(0,0,0,.35);display:none;place-items:center">
-  <div style="background:#fff;border-radius:12px;padding:16px;min-width:320px;max-width:90vw;box-shadow:0 10px 35px rgba(0,0,0,.15)">
-    <h3>Edit Entry</h3>
-    <form id="editForm">
-      <input type="hidden" name="id" />
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-        <label>Time <input name="time" type="time" step="600" required /></label>
-        <label>Duration (min) <input name="durationMin" type="number" step="10" min="10" required /></label>
-      </div>
-      <label>Customer <input name="customer" type="text" /></label>
-      <label>Notes <textarea name="notes" rows="3" style="width:100%"></textarea></label>
-      <label>Capacity <input name="capacityKey" type="text" value="default" /></label>
-      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:10px">
-        <button type="button" id="editCancel">Cancel</button>
-        <button type="submit">Save</button>
-      </div>
-    </form>
+  <!-- API Day picker + refresh -->
+  <div class="toolbar">
+    <label>Day: <input id="day" type="date" /></label>
+    <button id="refresh">Refresh</button>
   </div>
-</div>
 
-<script>
-(function () {
-  const dayEl = document.getElementById("day");
-  const refreshBtn = document.getElementById("refresh");
-  const tbody = document.querySelector("#entriesTable tbody");
-  const createForm = document.getElementById("createForm");
-  const editModal = document.getElementById("editModal");
-  const editForm = document.getElementById("editForm");
-  const editCancel = document.getElementById("editCancel");
+  <!-- API Create form -->
+  <form id="createForm" class="toolbar">
+    <input name="time" type="time" step="600" required />
+    <input name="durationMin" type="number" min="10" step="10" value="10" required />
+    <input name="agentId" placeholder="Agent ID" required />
+    <input name="customer" placeholder="Customer" />
+    <input name="notes" placeholder="Notes" style="min-width:220px" />
+    <button type="submit">Create</button>
+  </form>
 
-  // init day to today
-  const today = new Date().toISOString().slice(0,10);
-  dayEl.value = dayEl.value || today;
+  <!-- API Entries table -->
+  <table id="entriesTable" style="width:100%;border-collapse:collapse" border="1" cellpadding="6">
+    <thead>
+      <tr><th>Time</th><th>Duration</th><th>Agent</th><th>Customer</th><th>Notes</th><th>Actions</th></tr>
+    </thead>
+    <tbody></tbody>
+  </table>
 
-  const showModal = () => { editModal.style.display = "grid"; };
-  const hideModal = () => { editModal.style.display = "none"; };
+  <!-- API Edit modal -->
+  <div id="editModal" class="hidden" style="position:fixed;inset:0;background:rgba(0,0,0,.35);display:none;place-items:center">
+    <div style="background:#fff;border-radius:12px;padding:16px;min-width:320px;max-width:90vw;box-shadow:0 10px 35px rgba(0,0,0,.15)">
+      <h3>Edit Entry</h3>
+      <form id="editForm">
+        <input type="hidden" name="id" />
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+          <label>Time <input name="time" type="time" step="600" required /></label>
+          <label>Duration (min) <input name="durationMin" type="number" step="10" min="10" required /></label>
+        </div>
+        <label>Customer <input name="customer" type="text" /></label>
+        <label>Notes <textarea name="notes" rows="3" style="width:100%"></textarea></label>
+        <label>Capacity <input name="capacityKey" type="text" value="default" /></label>
+        <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:10px">
+          <button type="button" id="editCancel">Cancel</button>
+          <button type="submit">Save</button>
+        </div>
+      </form>
+    </div>
+  </div>
 
-  function ensure10m(hhmm) {
-    const m = String(hhmm || "").match(/^(\d{2}):(\d{2})$/);
-    if (!m) return false;
-    return Number(m[2]) % 10 === 0;
-  }
+  <script>
+  (function () {
+    const dayEl = document.getElementById("day");
+    const refreshBtn = document.getElementById("refresh");
+    const tbody = document.querySelector("#entriesTable tbody");
+    const createForm = document.getElementById("createForm");
+    const editModal = document.getElementById("editModal");
+    const editForm = document.getElementById("editForm");
+    const editCancel = document.getElementById("editCancel");
 
-  async function loadDay() {
-    const date = dayEl.value;
-    tbody.innerHTML = `<tr><td colspan="6">Loading…</td></tr>`;
-    try {
-      const items = await Api.listEntries(date);
-      items.sort((a,b) => a.time.localeCompare(b.time));
-      if (!items.length) {
-        tbody.innerHTML = `<tr><td colspan="6">No entries.</td></tr>`;
-        return;
-      }
-      tbody.innerHTML = items.map(rowHTML).join("");
-      attachRowHandlers();
-    } catch (e) {
-      tbody.innerHTML = `<tr><td colspan="6" style="color:#b00">Error: ${e.message}</td></tr>`;
+    const today = new Date().toISOString().slice(0,10);
+    dayEl.value = dayEl.value || today;
+
+    const showModal = () => { editModal.style.display = "grid"; };
+    const hideModal = () => { editModal.style.display = "none"; };
+
+    function ensure10m(hhmm) {
+      const m = String(hhmm || "").match(/^(\d{2}):(\d{2})$/);
+      if (!m) return false;
+      return Number(m[2]) % 10 === 0;
     }
-  }
 
-  function rowHTML(e) {
-    return `
-      <tr class="entry-row" data-id="${e.id}" data-time="${e.time}"
-          data-duration="${e.durationMin}" data-customer="${e.customer||""}"
-          data-notes="${(e.notes||"").replace(/"/g,'&quot;')}" data-capacity="${e.capacityKey||"default"}">
-        <td data-col="time">${e.time}</td>
-        <td data-col="duration">${e.durationMin}</td>
-        <td>${e.agentId}</td>
-        <td data-col="customer">${e.customer||""}</td>
-        <td data-col="notes">${e.notes||""}</td>
-        <td>
-          <button class="edit">Edit</button>
-          <button class="delete" data-time="${e.time}">Delete</button>
-        </td>
-      </tr>`;
-  }
-
-  function attachRowHandlers() {
-    document.querySelectorAll(".entry-row .edit").forEach(btn => {
-      btn.addEventListener("click", (ev) => {
-        const row = ev.target.closest(".entry-row");
-        editForm.id.value = row.dataset.id;
-        editForm.time.value = row.dataset.time;
-        editForm.dataset.originalTime = row.dataset.time; // remember prior time (for moves)
-        editForm.durationMin.value = row.dataset.duration || 10;
-        editForm.customer.value = row.dataset.customer || "";
-        editForm.notes.value = row.dataset.notes || "";
-        editForm.capacityKey.value = row.dataset.capacity || "default";
-        showModal();
-      });
-    });
-
-    document.querySelectorAll(".entry-row .delete").forEach(btn => {
-      btn.addEventListener("click", async (ev) => {
-        const row = ev.target.closest(".entry-row");
-        const id = row.dataset.id;
-        const time = ev.target.getAttribute("data-time");
-        const date = dayEl.value;
-        if (!confirm("Delete this entry?")) return;
-        try {
-          await Api.deleteEntry(id, date, time);
-          row.remove();
-          if (!tbody.children.length) {
-            tbody.innerHTML = `<tr><td colspan="6">No entries.</td></tr>`;
-          }
-        } catch (e) {
-          alert("Delete failed: " + e.message);
+    async function loadDay() {
+      const date = dayEl.value;
+      tbody.innerHTML = `<tr><td colspan="6">Loading…</td></tr>`;
+      try {
+        const items = await Api.listEntries(date);
+        items.sort((a,b) => a.time.localeCompare(b.time));
+        if (!items.length) {
+          tbody.innerHTML = `<tr><td colspan="6">No entries.</td></tr>`;
+          return;
         }
+        tbody.innerHTML = items.map(rowHTML).join("");
+        attachRowHandlers();
+      } catch (e) {
+        tbody.innerHTML = `<tr><td colspan="6" style="color:#b00">Error: ${e.message}</td></tr>`;
+      }
+    }
+
+    // rowHTML: display localized time but keep original e.time in data attributes and buttons
+    function rowHTML(e) {
+      const iso = e.scheduledAt ? e.scheduledAt : (e.date && e.time ? `${e.date}T${e.time}:00Z` : null);
+      const viewTime = iso ? formatUTCAsLocal(iso, { hour: "2-digit", minute: "2-digit" }) : (e.time || "");
+      return `
+        <tr class="entry-row" data-id="${e.id}" data-time="${e.time}"
+            data-duration="${e.durationMin}" data-customer="${e.customer||""}"
+            data-notes="${(e.notes||"").replace(/"/g,'&quot;')}" data-capacity="${e.capacityKey||"default"}">
+          <td data-col="time">${viewTime}</td>
+          <td data-col="duration">${e.durationMin}</td>
+          <td>${e.agentId}</td>
+          <td data-col="customer">${e.customer||""}</td>
+          <td data-col="notes">${e.notes||""}</td>
+          <td>
+            <button class="edit">Edit</button>
+            <button class="delete" data-time="${e.time}">Delete</button>
+          </td>
+        </tr>`;
+    }
+
+    function attachRowHandlers() {
+      document.querySelectorAll(".entry-row .edit").forEach(btn => {
+        btn.addEventListener("click", (ev) => {
+          const row = ev.target.closest(".entry-row");
+          editForm.id.value = row.dataset.id;
+          editForm.time.value = row.dataset.time;
+          editForm.dataset.originalTime = row.dataset.time;
+          editForm.durationMin.value = row.dataset.duration || 10;
+          editForm.customer.value = row.dataset.customer || "";
+          editForm.notes.value = row.dataset.notes || "";
+          editForm.capacityKey.value = row.dataset.capacity || "default";
+          showModal();
+        });
       });
+
+      document.querySelectorAll(".entry-row .delete").forEach(btn => {
+        btn.addEventListener("click", async (ev) => {
+          const row = ev.target.closest(".entry-row");
+          const id = row.dataset.id;
+          const time = ev.target.getAttribute("data-time"); // original UTC HH:mm
+          const date = dayEl.value;
+          if (!confirm("Delete this entry?")) return;
+          try {
+            await Api.deleteEntry(id, date, time);
+            row.remove();
+            if (!tbody.children.length) tbody.innerHTML = `<tr><td colspan="6">No entries.</td></tr>`;
+          } catch (e) {
+            alert("Delete failed: " + e.message);
+          }
+        });
+      });
+    }
+
+    // Create (local input → UTC via CREATE SHIM below)
+    createForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const fd = new FormData(createForm);
+      const date = dayEl.value;
+      const time = fd.get("time");
+      if (!ensure10m(time)) return alert("Time must be 10-minute aligned (e.g., 14:30, 14:40).");
+      const payload = {
+        date,
+        time,
+        durationMin: Number(fd.get("durationMin") || 10),
+        agentId: fd.get("agentId"),
+        customer: fd.get("customer") || "",
+        notes: fd.get("notes") || ""
+      };
+      try {
+        await Api.createEntry(payload);
+        createForm.reset();
+        await loadDay();
+      } catch (err) {
+        alert("Create failed: " + err.message);
+      }
     });
-  }
 
-  // Create
-  createForm.addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const fd = new FormData(createForm);
-    const date = dayEl.value;
-    const time = fd.get("time");
-    if (!ensure10m(time)) return alert("Time must be 10-minute aligned (e.g., 14:30, 14:40).");
-    const payload = {
-      date,
-      time,
-      durationMin: Number(fd.get("durationMin") || 10),
-      agentId: fd.get("agentId"),
-      customer: fd.get("customer") || "",
-      notes: fd.get("notes") || ""
+    // Edit modal submit
+    editCancel.addEventListener("click", hideModal);
+    editForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const fd = new FormData(editForm);
+      const id = fd.get("id");
+      const newTime = fd.get("time");
+      const priorTime = editForm.dataset.originalTime || newTime;
+      const date = dayEl.value;
+      if (!ensure10m(newTime)) return alert("Time must be 10-minute aligned.");
+
+      const patch = {
+        currentDate: date,
+        currentTime: priorTime,
+        date,
+        time: newTime,
+        durationMin: Number(fd.get("durationMin")),
+        customer: fd.get("customer") || "",
+        notes: fd.get("notes") || "",
+        capacityKey: fd.get("capacityKey") || "default"
+      };
+
+      try {
+        await Api.updateEntry(id, patch);
+        hideModal();
+        await loadDay();
+      } catch (err) {
+        alert("Update failed: " + err.message);
+      }
+    });
+
+    refreshBtn.addEventListener("click", loadDay);
+    dayEl.addEventListener("change", loadDay);
+    loadDay();
+  })();
+  </script>
+
+  <!-- KEEP: CREATE SHIM (local date/time → UTC for API) -->
+  <script>
+  (function () {
+    if (!window.Api || !window.localToUTCISO) return;
+    const originalCreate = window.Api.createEntry;
+    window.Api.createEntry = (entry) => {
+      if (!entry?.scheduledAt) {
+        const dateInput = document.querySelector("#dateInput, input[name='date']");
+        const timeInput = document.querySelector("#timeInput, input[name='time']");
+        const dateStr = entry?.date || dateInput?.value;
+        const timeStr = entry?.time || timeInput?.value;
+        if (dateStr && timeStr) {
+          entry = { ...entry, scheduledAt: localToUTCISO(dateStr, timeStr) };
+          const utc = new Date(entry.scheduledAt);
+          const yyyy = utc.getUTCFullYear();
+          const mm = String(utc.getUTCMonth() + 1).padStart(2, "0");
+          const dd = String(utc.getUTCDate()).padStart(2, "0");
+          const HH = String(utc.getUTCHours()).padStart(2, "0");
+          const MM = String(utc.getUTCMinutes()).padStart(2, "0");
+          entry.date = `${yyyy}-${mm}-${dd}`;
+          entry.time = `${HH}:${MM}`;
+        }
+      }
+      return originalCreate(entry);
     };
-    try {
-      await Api.createEntry(payload);
-      createForm.reset();
-      await loadDay();
-    } catch (err) {
-      alert("Create failed: " + err.message);
-    }
-  });
-
-  // Edit modal submit (supports move + edit)
-  editCancel.addEventListener("click", hideModal);
-  editForm.addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const fd = new FormData(editForm);
-    const id = fd.get("id");
-    const newTime = fd.get("time");
-    const priorTime = editForm.dataset.originalTime || newTime;
-    const date = dayEl.value;
-
-    if (!ensure10m(newTime)) return alert("Time must be 10-minute aligned.");
-
-    const patch = {
-      currentDate: date,
-      currentTime: priorTime,
-      date,
-      time: newTime,
-      durationMin: Number(fd.get("durationMin")),
-      customer: fd.get("customer") || "",
-      notes: fd.get("notes") || "",
-      capacityKey: fd.get("capacityKey") || "default"
-    };
-
-    try {
-      await Api.updateEntry(id, patch);
-      hideModal();
-      await loadDay();
-    } catch (err) {
-      alert("Update failed: " + err.message);
-    }
-  });
-
-  // Refresh & initial load
-  refreshBtn.addEventListener("click", loadDay);
-  dayEl.addEventListener("change", loadDay);
-  loadDay();
-})();
-</script>
-
+  })();
+  </script>
 </body>
 </html>
