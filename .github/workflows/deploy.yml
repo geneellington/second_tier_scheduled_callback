@@ -1,0 +1,36 @@
+name: Deploy to S3 (scheduled-callback-ui)
+
+on:
+  push: {}
+  workflow_dispatch: {}
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::758340002747:role/GitHubS3DeployRole-scheduled-callback
+          aws-region: us-east-1
+
+      - name: Sync to S3 prefix
+        run: |
+          aws s3 sync . "s3://gene-scheduled-callback/scheduled-callback-ui/" \
+            --delete \
+            --exclude ".git/*" \
+            --exclude ".github/*" \
+            --exclude ".gitignore"
+
+      - name: Invalidate CloudFront
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id E18FN06YKTXO5W \
+            --paths "/*"
