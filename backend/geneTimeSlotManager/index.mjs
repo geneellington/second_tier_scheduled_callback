@@ -22,6 +22,31 @@ function respond(event, statusCode, bodyObj) {
   };
 }
 
+// --- Add: S3 loader for capacity.json
+import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
+
+const s3 = new S3Client({ region: process.env.AWS_REGION || "us-east-1" });
+const CAP_BUCKET = process.env.CAPACITY_S3_BUCKET || "gene-scheduled-callback";
+const CAP_KEY    = process.env.CAPACITY_S3_KEY    || "scheduled-callback-ui/capacity.json";
+
+let capacityCache;
+async function loadCapacity() {
+  if (capacityCache) return capacityCache;
+  const resp = await s3.send(new GetObjectCommand({ Bucket: CAP_BUCKET, Key: CAP_KEY }));
+  const text = await resp.Body.transformToString();
+  capacityCache = JSON.parse(text);
+  return capacityCache;
+}
+
+function resolveQueue(cfg, groupKey) {
+  const g = cfg?.groups?.[groupKey];
+  if (!g) throw new Error(`Unknown groupKey: ${groupKey}`);
+  return {
+    queueName: g.queue?.name || null,
+    queueArn:  g.queue?.arn  || null
+  };
+}
+
 // Utility to read method across REST API and HTTP API
 function getMethod(event) {
   return event?.requestContext?.http?.method || event?.httpMethod || "";
@@ -162,13 +187,13 @@ export const handler = async (event) => {
 
 
   try {
-    const method   = event.httpMethod || event.requestContext?.http?.method || "GET";
+    const httpMethod   = event.httpMethod || event.requestContext?.http?.method || "GET";
     const resource = event.resource; // "/entries" or "/entries/{id}"
     const idParam  = event.pathParameters?.id || null;
     const qs       = event.queryStringParameters || {};
     const body     = event.body ? JSON.parse(event.body) : null;
 
-    // OPTIONS preflight (if routed to Lambda)
+      // OPTIONS preflight (if routed to Lambda)
     if (method === "OPTIONS") {
       return {
         statusCode: 204,
@@ -178,7 +203,7 @@ export const handler = async (event) => {
     }
 
     // GET /entries?date=YYYY-MM-DD
-    if (resource === "/entries" && method === "GET") {
+    if (resource === "/entries" && httpMethod === "GET") {
       const date = qs.date;
       if (!date) return res(event, 400, { message: "Missing required query param: date" });
 
@@ -193,96 +218,105 @@ export const handler = async (event) => {
     }
 
     // POST /entries (create; pass-through extras like phone)
-    if (resource === "/entries" && method === "POST") {
-      if (!body || !body.date || !body.time) {
-        return res(event, 400, { message: "Missing required fields: date, time" });
-      }
+if (resource === "/entries" && httpMethod === "POST") {
+  if (!body || !body.date || !body.time) {
+    return res(event, 400, { message: "Missing required fields: date, time" });
+  }
 
-      const id  = typeof randomUUID === "function"
-        ? randomUUID()
-        : (Date.now().toString(36) + Math.random().toString(36).slice(2, 10));
-      const now = new Date().toISOString();
+  // Validate + resolve queue for the chosen group
+  if (!body.groupKey) {
+    return res(event, 400, { message: "Missing required field: groupKey" });
+  }
+  const cfg = await loadCapacity();
+  let queueName, queueArn;
+  try {
+    ({ queueName, queueArn } = resolveQueue(cfg, body.groupKey));
+  } catch (e) {
+    // Unknown groupKey in capacity.json
+    return res(event, 400, { message: e.message });
+  }
 
-      // --- compute timestamps for Confirmation / Reminder / Notification ---
-      const scheduledAt     = toISOZ(body.date, body.time); // exact callback moment (UTC)
-      const confirmationAt  = new Date(Date.parse(scheduledAt) + CONFIRM_DELAY_MINUTES*60_000).toISOString(); // after create
-      const reminderAt      = new Date(Date.parse(scheduledAt) - REMINDER_AHEAD_MINUTES*60_000).toISOString(); // before start
-      // Backward-compat field names you already use:
-      const notifyAt        = new Date(Date.parse(scheduledAt) - AHEAD_MIN*60_000).toISOString(); // keep writing this too
-      const scheduledDate   = scheduledAt.slice(0,10);
-      const notifyDate      = scheduledDate;
+  const id  = typeof randomUUID === "function"
+    ? randomUUID()
+    : (Date.now().toString(36) + Math.random().toString(36).slice(2, 10));
+  const now = new Date().toISOString();
 
-      const item = {
-        PK: `DATE#${body.date}`,
-        SK: `TIME#${body.time}#ID#${id}`,
-        id,
-        date: body.date,
-        time: body.time,
-        durationMin: Number(body.durationMin ?? 10),
-        agentId: body.agentId ?? "",
-        customer: body.customer ?? "",
-        notes: body.notes ?? "",
-        capacityKey: body.capacityKey ?? "default",
-        createdAt: now,
-        updatedAt: now,
-        // store the four fields used by the schedule Lambda
-        scheduledAt,
-        scheduledDate,
-        confirmationAt,
-        reminderAt,
-        notifyAt,
-        notifyDate
-      };
+  // --- compute timestamps for Confirmation / Reminder / Notification ---
+  const scheduledAt     = toISOZ(body.date, body.time); // exact callback moment (UTC)
+  const confirmationAt  = new Date(Date.parse(scheduledAt) + CONFIRM_DELAY_MINUTES*60_000).toISOString(); // after create
+  const reminderAt      = new Date(Date.parse(scheduledAt) - REMINDER_AHEAD_MINUTES*60_000).toISOString(); // before start
+  // Backward-compat field names you already use:
+  const notifyAt        = new Date(Date.parse(scheduledAt) - AHEAD_MIN*60_000).toISOString(); // keep writing this too
+  const scheduledDate   = scheduledAt.slice(0,10);
+  const notifyDate      = scheduledDate;
 
-      // pass-through any extra fields (e.g., phone)
-      for (const [k, v] of Object.entries(body)) {
-        if (!RESERVED.has(k)) item[k] = v;
-      }
+  const item = {
+    PK: `DATE#${body.date}`,
+    SK: `TIME#${body.time}#ID#${id}`,
+    id,
+    date: body.date,
+    time: body.time,
+    durationMin: Number(body.durationMin ?? 10),
+    agentId: body.agentId ?? "",
+    customer: body.customer ?? "",
+    notes: body.notes ?? "",
+    capacityKey: body.capacityKey ?? "default",
+    createdAt: now,
+    updatedAt: now,
+    // store the four fields used by the schedule Lambda
+    scheduledAt,
+    scheduledDate,
+    confirmationAt,
+    reminderAt,
+    notifyAt,
+    notifyDate,
+    // NEW: persist group/queue info
+    groupKey: body.groupKey,
+    queueName,
+    queueArn
+  };
 
-      await ddb.send(new PutItemCommand({
-        TableName: TABLE,
-        Item: marshall(item, { removeUndefinedValues: true }),
-        ConditionExpression: "attribute_not_exists(PK) AND attribute_not_exists(SK)"
-      }));
+  // pass-through any extra fields (e.g., phone)
+  for (const [k, v] of Object.entries(body)) {
+    if (!RESERVED.has(k)) item[k] = v;
+  }
 
-      try {
-        const attrs = {
-          entryId: item.id,
-          date: item.date,
-          time: item.time,
-          customer: item.customer ?? "",
-          phone: item.phone ?? "",
-          agentId: item.agentId ?? "",
-          capacityKey: item.capacityKey ?? "default"
-        };
-        const cmd = new StartTaskContactCommand({
-          InstanceId: CONNECT_INSTANCE_ID,
-          ContactFlowId: CONTACT_FLOW_ARN_CONFIRMATION,
-          Name: `Callback Confirmation ${item.date} ${item.time}`,
-          Description: "Notify customer the callback has been scheduled.",
-          Attributes: attrs   // available in the contact flow as $.Attributes.*
-        });
-        const out = await connect.send(cmd);
-        console.log("StartTaskContact OK (Confirmation)", { id: item.id, contactId: out.ContactId });
-        // OPTIONAL: mark it in the record (uncomment if you want a flag)
-        // await ddb.send(new UpdateCommand({
-        //   TableName: TABLE_NAME,
-        //   Key: { PK: item.PK, SK: item.SK },
-        //   UpdateExpression: "SET confirmationTaskSentAt = :ts",
-        //   ExpressionAttributeValues: { ":ts": new Date().toISOString() }
-        // }));
-      } catch (e) {
-        console.error("StartTaskContact FAILED (Confirmation)", { id: item.id, err: e });
-      }
+  await ddb.send(new PutItemCommand({
+    TableName: TABLE,
+    Item: marshall(item, { removeUndefinedValues: true }),
+    ConditionExpression: "attribute_not_exists(PK) AND attribute_not_exists(SK)"
+  }));
 
-      console.info("POST /entries OK", { id, date: body.date, time: body.time });
+  try {
+    const attrs = {
+      entryId: item.id,
+      date: item.date,
+      time: item.time,
+      customer: item.customer ?? "",
+      phone: item.phone ?? "",
+      agentId: item.agentId ?? "",
+      capacityKey: item.capacityKey ?? "default"
+    };
+    const cmd = new StartTaskContactCommand({
+      InstanceId: CONNECT_INSTANCE_ID,
+      ContactFlowId: CONTACT_FLOW_ARN_CONFIRMATION,
+      Name: `Callback Confirmation ${item.date} ${item.time}`,
+      Description: "Notify customer the callback has been scheduled.",
+      Attributes: attrs   // available in the contact flow as $.Attributes.*
+    });
+    const out = await connect.send(cmd);
+    console.log("StartTaskContact OK (Confirmation)", { id: item.id, contactId: out.ContactId });
+  } catch (e) {
+    console.error("StartTaskContact FAILED (Confirmation)", { id: item.id, err: e });
+  }
 
-      return res(event, 201, stripKeys(item));
-    }
+  console.info("POST /entries OK", { id, date: body.date, time: body.time });
+  return res(event, 201, stripKeys(item));
+}
 
 
     // PATCH /entries/{id} (update and/or move)
-    if (resource === "/entries/{id}" && method === "PATCH") {
+    if (resource === "/entries/{id}" && httpMethod === "PATCH") {
       const id = idParam;
       if (!id)  return res(event, 400, { message: "Missing path param: id" });
       if (!body) return res(event, 400, { message: "Missing body" });
@@ -389,7 +423,7 @@ export const handler = async (event) => {
 
 
     // DELETE /entries/{id}?date=...&time=...
-    if (resource === "/entries/{id}" && method === "DELETE") {
+    if (resource === "/entries/{id}" && httpMethod === "DELETE") {
       const id = idParam;
       const { date, time } = qs;
       if (!id || !date || !time) return res(event, 400, { message: "Missing id, date, or time" });
