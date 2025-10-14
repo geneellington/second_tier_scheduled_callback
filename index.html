@@ -5,41 +5,60 @@
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <title>PoC – Scheduler (Calendar + Groups)</title>
 
-  <!-- Styles: lightweight and scoped -->
+  <!--
+    ============================
+    CSS (scoped + minimal)
+    ----------------------------
+    - Keeps the classic calendar look:
+      hour labels in a fixed left column,
+      scrollable 10-minute rows on the right.
+    - Uses CSS variables so you can tweak colors/sizes easily.
+  -->
   <style>
     :root {
       --bg:#f7f7f9; --card:#fff; --ink:#1a1d2a; --muted:#6a7280; --line:#e6e8ef; --brand:#0d6efd;
-      --ok:#18a558; --warn:#a87b00; --full:#d93025; --slot-h:32px;
+      --ok:#18a558; --warn:#a87b00; --full:#d93025; --slot-h:32px; /* one row = 10 minutes */
     }
+
     body { margin:0; background:var(--bg); color:var(--ink); font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial; }
     .wrap { max-width:1180px; margin:0 auto; padding:18px; display:grid; gap:12px; }
 
+    /* top toolbars + inputs */
     .toolbar { display:flex; flex-wrap:wrap; gap:10px; align-items:center; background:var(--card); border:1px solid var(--line); border-radius:10px; padding:12px; }
     .toolbar label { font-size:14px; color:var(--muted); }
     .toolbar select, .toolbar input { padding:8px 10px; border:1px solid var(--line); border-radius:8px; }
 
+    /* small tab row for Today + next 4 days */
     .day-tabs { display:flex; flex-wrap:wrap; gap:8px; }
     .day-tab { background:var(--card); border:1px solid var(--line); padding:8px 10px; border-radius:8px; cursor:pointer; color:var(--muted); }
     .day-tab.active { color:var(--ink); border-color:var(--brand); box-shadow:0 0 0 1px var(--brand) inset; }
 
-    /* Calendar frame with left hour labels and scrollable slots */
+    /* calendar frame: left = hour labels; right = rows (10m each) */
     .calendar { background:var(--card); border:1px solid var(--line); border-radius:10px; display:grid; grid-template-columns:90px 1fr; overflow:hidden; height:620px; }
     .time-labels { border-right:1px solid var(--line); overflow-y:auto; background:#fafbff; }
     .slots { overflow-y:auto; }
+
+    /* each hour label block is 6 rows tall (6×10m = 60m) */
     .hour-label { height:calc(var(--slot-h)*6); display:grid; align-items:start; padding:6px 8px; border-bottom:1px solid var(--line); font-size:12px; color:var(--muted); }
 
-    /* Each 10-minute row */
+    /* one row = one 10-minute slot */
     .slot { height:var(--slot-h); display:grid; align-items:center; border-bottom:1px solid var(--line);
             grid-template-columns: 90px 110px 1fr; gap:8px; padding:0 8px; }
     .slot:hover { background:#f7faff; }
-    .slot-time { font-size:12px; color:var(--ink); }
-    .slot-cap { font-size:12px; padding:2px 8px; border-radius:999px; width:max-content; }
+
+    /* row columns */
+    .slot-time { font-size:12px; color:var(--ink); }              /* localized label (HH:MM in selected TZ) */
+    .slot-cap  { font-size:12px; padding:2px 8px; border-radius:999px; width:max-content; }  /* shows used/cap */
+
+    /* capacity colors */
     .cap-ok   { background:rgba(24,165,88,.12); color:var(--ok);   border:1px solid rgba(24,165,88,.35); }
     .cap-warn { background:rgba(230,184,0,.12); color:var(--warn); border:1px solid rgba(230,184,0,.35); }
     .cap-full { background:rgba(217,48,37,.12); color:var(--full); border:1px solid rgba(217,48,37,.35); }
 
+    /* chips show who’s booked in a slot (simple label) */
     .chips { display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
-    .chip { font-size:11px; background:#f2f4ff; border:1px solid var(--line); padding:2px 6px; border-radius:6px; }
+    .chip  { font-size:11px; background:#f2f4ff; border:1px solid var(--line); padding:2px 6px; border-radius:6px; }
+
     .status { font-size:12px; color:var(--muted); padding:4px 2px 0; }
 
     table { width:100%; border-collapse:collapse; }
@@ -50,18 +69,34 @@
     .btn.brand { background:var(--brand); color:#fff; border:none; }
   </style>
 
-  <!-- API client -->
+  <!--
+    ============================
+    API CLIENT (fetch wrappers)
+    ----------------------------
+    - Centralizes network calls to your API Gateway prod stage.
+    - If you ever change the stage/base URL, update `BASE` only.
+  -->
   <script>
     (function () {
       const BASE = "https://f36ru2h4ua.execute-api.us-east-1.amazonaws.com/prod";
+
       async function fetchJSON(url, options = {}) {
         const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
         const res = await fetch(url, { ...options, headers });
-        const txt = await res.text(); let data = null; try { data = txt ? JSON.parse(txt) : null; } catch {}
+        const txt = await res.text();
+        let data = null;
+        try { data = txt ? JSON.parse(txt) : null; } catch {}
         if (!res.ok) throw new Error(data?.error || data?.message || res.statusText);
         return data;
       }
-      function qs(obj){ const p=new URLSearchParams(); Object.entries(obj).forEach(([k,v])=> (v!=null && v!=="") && p.append(k,v)); return p.toString(); }
+
+      function qs(obj){
+        const p = new URLSearchParams();
+        Object.entries(obj).forEach(([k,v])=> (v!=null && v!=="") && p.append(k,v));
+        return p.toString();
+      }
+
+      // Expose minimal API for the page to use
       window.Api = {
         listEntries: (date)                 => fetchJSON(`${BASE}/entries?${qs({date})}`),
         createEntry: (entry)                => fetchJSON(`${BASE}/entries`, { method:"POST", body:JSON.stringify(entry) }),
@@ -70,25 +105,47 @@
     })();
   </script>
 
-  <!-- Time zone + UTC helpers -->
+  <!--
+    ============================
+    TIME ZONE HELPERS
+    ----------------------------
+    - User selects a "viewing" time zone (sticky in localStorage).
+    - We:
+      1) Render times in that zone (display only).
+      2) Convert local wall time (day + HH:MM) → UTC for the API.
+  -->
   <script>
     const pad = n => String(n).padStart(2,'0');
+
     const TZ_KEY = "ui.timezone";
     const DEFAULT_TZ = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
     const TZ_LIST = ["UTC","America/New_York","America/Chicago","America/Denver","America/Los_Angeles","Europe/London","Europe/Berlin","Asia/Tokyo","Australia/Sydney"];
+
     function getSelectedTZ(){ return localStorage.getItem(TZ_KEY) || DEFAULT_TZ; }
     function setSelectedTZ(tz){ localStorage.setItem(TZ_KEY, tz); }
+
+    // Populate a <select> with time zones; keep the choice sticky
     function initTZDropdown(sel){
       sel.innerHTML=""; const chosen = getSelectedTZ();
-      TZ_LIST.forEach(tz=>{ const o=document.createElement('option'); o.value=tz; o.textContent=tz; if(tz===chosen) o.selected=true; sel.appendChild(o); });
+      TZ_LIST.forEach(tz=>{
+        const o=document.createElement('option');
+        o.value=tz; o.textContent=tz; if(tz===chosen) o.selected=true;
+        sel.appendChild(o);
+      });
       sel.addEventListener('change', ()=> setSelectedTZ(sel.value));
     }
+
+    // Render a UTC ISO instant as a wall-clock label in the selected TZ
     function formatUTCAsLocal(iso, opts={}) {
-      return new Intl.DateTimeFormat(undefined, { timeZone:getSelectedTZ(), hour:"2-digit", minute:"2-digit", ...opts }).format(new Date(iso));
+      return new Intl.DateTimeFormat(undefined, { timeZone:getSelectedTZ(), hour:"2-digit", minute:"2-digit", ...opts })
+        .format(new Date(iso));
     }
+
+    // Convert local wall time (selected TZ) → UTC ISO instant
     function toUTCISOFromSelectedTZ(dateYYYYMMDD, hhmm) {
       const tz = getSelectedTZ();
       const localWall = new Date(`${dateYYYYMMDD}T${hhmm}:00`);
+      // "Invert" the TZ to find the actual UTC instant for that wall time
       const inv = new Date(localWall.toLocaleString('en-US', { timeZone: tz }));
       const diff = localWall.getTime() - inv.getTime();
       return new Date(localWall.getTime() + diff).toISOString();
@@ -98,7 +155,14 @@
 
 <body>
   <div class="wrap">
-    <!-- Top toolbar: Day, Group, Time zone -->
+    <!--
+      ============================
+      TOOLBAR (Day / Group / TZ)
+      ----------------------------
+      - Day: “what day are we looking at?”
+      - Group: capacity profile from capacity.json (sticky)
+      - Time zone: display zone; create flow converts to UTC
+    -->
     <div class="toolbar">
       <label>Day: <input id="day" type="date"/></label>
       <label>Group: <select id="group"></select></label>
@@ -106,18 +170,38 @@
       <button id="refresh" class="btn">Refresh</button>
     </div>
 
-    <!-- Tabs (Today + next 4) -->
+    <!--
+      ============================
+      DAY TABS (Today + next 4)
+      ----------------------------
+      - Shortcut buttons to jump days.
+      - Mirrors the date picker value.
+    -->
     <div class="day-tabs" id="dayTabs"></div>
 
-    <!-- Calendar (hour labels left, 10-min rows right) -->
+    <!--
+      ============================
+      CALENDAR FRAME
+      ----------------------------
+      - Left column: hour labels (in selected TZ).
+      - Right column: one row per 10 minutes.
+    -->
     <div class="calendar">
       <div class="time-labels" id="timeLabels"></div>
       <div class="slots" id="slots"></div>
     </div>
 
+    <!-- status line for gentle feedback -->
     <div class="status" id="status">Ready.</div>
 
-    <!-- Create entry -->
+    <!--
+      ============================
+      CREATE ENTRY
+      ----------------------------
+      - User chooses time (HH:MM in selected TZ),
+        we convert (Day + Time + TZ) → UTC, send to API.
+      - We also send "groupKey" so the backend can map to a queue.
+    -->
     <div class="toolbar">
       <form id="createForm" style="display:flex;flex-wrap:wrap;gap:10px;align-items:center" novalidate>
         <label>Time <input name="time" type="time" step="600" required/></label>
@@ -129,7 +213,13 @@
       </form>
     </div>
 
-    <!-- Entries table -->
+    <!--
+      ============================
+      ENTRIES TABLE
+      ----------------------------
+      - Shows the entries returned by the API for the selected day.
+      - Time column is localized to the selected TZ for readability.
+    -->
     <div style="background:var(--card); border:1px solid var(--line); border-radius:10px; overflow:auto;">
       <table id="entriesTable">
         <thead><tr><th>Time</th><th>Duration</th><th>Agent</th><th>Customer</th><th>Notes</th><th>Actions</th></tr></thead>
@@ -138,32 +228,38 @@
     </div>
   </div>
 
+  <!--
+    ============================
+    APP SCRIPT
+    ----------------------------
+    - Handles page state, renders the calendar, loads capacity.json + entries,
+      and wires the create flow.
+  -->
   <script>
-    // ---------- state ----------
-    const DAYS = 5;                                     // today + 4
-    const LS_GROUP = 'sc_group_key';                    // sticky group
-    let groupCfg = null;                                 // parsed capacity.json
-    let activeGroupKey = null;
-    let activeDateISO = null;                            // YYYY-MM-DD
-    let dayItems = [];                                   // entries from API for active day
+    /* ---------- tiny helpers + state ---------- */
+    const LS_GROUP = 'sc_group_key';                              // sticky group selection
+    const DAYS = 5;                                               // Today + next 4 tabs
+    const times10 = () => { const out=[]; for(let h=0;h<24;h++) for(let m=0;m<60;m+=10) out.push(`${pad(h)}:${pad(m)}`); return out; };
+    const setStatus = (m) => document.getElementById('status').textContent = m;
 
-    // ---------- helpers ----------
-    function setStatus(msg){ document.getElementById('status').textContent = msg; }
-    function times10(){ const out=[]; for(let h=0;h<24;h++) for(let m=0;m<60;m+=10) out.push(`${pad(h)}:${pad(m)}`); return out; }
+    let capacityCfg = null;                                       // parsed capacity.json
+    let activeGroupKey = null;                                    // key inside cfg.groups (e.g., "tier2_checking")
+    let activeDateISO = null;                                     // YYYY-MM-DD for the view
+    let dayItems = [];                                            // entries returned by API for active day
 
-    // capacity for selected group and HH:MM (capacity.json is per-slot, per-group; date-agnostic)
+    /* ---------- capacity helpers ---------- */
+    // capacity.json is per group, per time-of-day (not date-specific for now)
     function capacityForHHMM(hhmm) {
-      const slots = groupCfg?.groups?.[activeGroupKey]?.slots || {};
+      const slots = capacityCfg?.groups?.[activeGroupKey]?.slots || {};
       const v = slots[hhmm];
-      return typeof v === 'number' ? v : 0;             // missing means closed
+      return typeof v === 'number' ? v : 0;                       // missing = closed
     }
-
-    // count booked items for HH:MM in the loaded dayItems
+    // count entries already booked for a UTC HH:MM in the active day
     function bookedCount(hhmm) {
-      return dayItems.filter(e => e.time === hhmm).length; // API uses UTC HH:MM; we're showing TZ-local labels separately
+      return dayItems.filter(e => e.time === hhmm).length;
     }
 
-    // ---------- UI: Day tabs ----------
+    /* ---------- day tabs UI ---------- */
     function renderTabs(){
       const tabs = document.getElementById('dayTabs'); tabs.innerHTML='';
       const today = new Date(); today.setHours(0,0,0,0);
@@ -178,20 +274,21 @@
       }
     }
 
-    // ---------- UI: hour labels (left column) ----------
+    /* ---------- left hour labels (localized to selected TZ) ---------- */
     function renderHourLabels(){
       const host = document.getElementById('timeLabels'); host.innerHTML='';
       for(let h=0; h<24; h++){
+        // Build a UTC anchor like 2025-10-14T13:00:00Z and format it in the TZ.
         const label = formatUTCAsLocal(`${activeDateISO}T${pad(h)}:00:00Z`, { hour:"2-digit" });
         const div = document.createElement('div'); div.className='hour-label'; div.textContent = `${label}:00`;
         host.appendChild(div);
       }
     }
 
-    // ---------- UI: slot rows (right column) ----------
+    /* ---------- slot rows (one per 10 minutes) ---------- */
     function capClass(used, cap){ if(cap===0 || used>=cap) return 'cap-full'; if(used>=cap-1) return 'cap-warn'; return 'cap-ok'; }
     function renderSlots(scrollToNow=false){
-      renderHourLabels();                                 // keep left labels in sync
+      renderHourLabels();                                         // keep labels in sync with TZ/day
       const host = document.getElementById('slots'); host.innerHTML='';
       times10().forEach(hhmm=>{
         const used = bookedCount(hhmm);
@@ -199,24 +296,24 @@
 
         const row = document.createElement('div'); row.className='slot'; row.dataset.time = hhmm;
 
-        // Time column (display local TZ label)
+        // Col 1: localized time label
         const tcol = document.createElement('div'); tcol.className='slot-time';
         const localLabel = formatUTCAsLocal(`${activeDateISO}T${hhmm}:00Z`, { hour:"2-digit", minute:"2-digit" });
         tcol.textContent = localLabel;
 
-        // Capacity badge
+        // Col 2: capacity badge (used / cap)
         const capCol = document.createElement('div');
         capCol.className = `slot-cap ${capClass(used, cap)}`;
         capCol.textContent = `${used}/${cap}`;
 
-        // Chips (names) – simple list for now
+        // Col 3: chips of who’s in this slot (simple)
         const chips = document.createElement('div'); chips.className='chips';
         dayItems.filter(e=>e.time===hhmm).forEach(e=>{
           const sp = document.createElement('span'); sp.className='chip'; sp.textContent = `${e.customer||''} · ${e.agentId||''}`;
           chips.appendChild(sp);
         });
 
-        // Double-click row to prefill form
+        // UX: double-click a row to prefill the Create form’s time input
         row.ondblclick = ()=>{
           if(cap<=0 || used>=cap){ alert('This timeslot is full or closed.'); return; }
           const timeInput = document.querySelector('#createForm input[name="time"]'); if(timeInput) timeInput.value = hhmm;
@@ -226,49 +323,71 @@
         host.appendChild(row);
       });
 
+      // optional nice-to-have: scroll near "now" if viewing today
       if(scrollToNow){
         const now = new Date();
-        if(`${now.getUTCFullYear()}-${pad(now.getUTCMonth()+1)}-${pad(now.getUTCDate())}` === activeDateISO){
+        const todayISO = `${now.getUTCFullYear()}-${pad(now.getUTCMonth()+1)}-${pad(now.getUTCDate())}`;
+        if(todayISO === activeDateISO){
           const idx = now.getUTCHours()*6 + Math.floor(now.getUTCMinutes()/10);
           const el = host.children[idx]; if(el) host.scrollTo({ top: el.offsetTop-100, behavior:'smooth' });
         }
       }
     }
 
-    // ---------- capacity.json + group dropdown ----------
+    /* ---------- groups + capacity.json ---------- */
     async function loadGroupsConfig(){
+      // Loads /capacity.json from the same S3 prefix.
+      // Structure (example):
+      // {
+      //   "version": 2,
+      //   "groups": {
+      //     "tier2_checking": { "displayName": "Tier 2 - Checking", "queue": {...}, "slots": { "09:00": 2, ... } },
+      //     "tier2_savings":  { "displayName": "Tier 2 - Savings",  "queue": {...}, "slots": { "09:00": 1, ... } }
+      //   }
+      // }
       const r = await fetch('capacity.json',{ cache:'no-store' });
       if(!r.ok) throw new Error('Failed to load capacity.json');
-      groupCfg = await r.json();
+      capacityCfg = await r.json();
 
+      // Populate the Group dropdown
       const sel = document.getElementById('group'); sel.innerHTML='';
-      Object.entries(groupCfg.groups).forEach(([key,g])=>{
+      Object.entries(capacityCfg.groups).forEach(([key,g])=>{
         const opt=document.createElement('option'); opt.value=key; opt.textContent=g.displayName||key; sel.appendChild(opt);
       });
+
+      // Restore sticky selection or default to first
       const saved = localStorage.getItem(LS_GROUP);
-      activeGroupKey = (saved && groupCfg.groups[saved]) ? saved : sel.value;
+      activeGroupKey = (saved && capacityCfg.groups[saved]) ? saved : sel.value;
       sel.value = activeGroupKey;
+
+      // When the user changes group: persist and rerender slots
       sel.addEventListener('change', ()=>{ activeGroupKey = sel.value; localStorage.setItem(LS_GROUP, activeGroupKey); renderSlots(); });
     }
 
-    // ---------- API: load entries for active day ----------
+    /* ---------- API: load entries for the active day ---------- */
     async function refreshDay(){
       setStatus('Loading entries…');
       try {
+        // API returns UTC date + time ("HH:MM"). We keep it in UTC internally
+        // and *only* localize labels for display.
         dayItems = await Api.listEntries(activeDateISO);
-        // Sort by time (UTC HH:MM)
         dayItems.sort((a,b)=>(a.time||'').localeCompare(b.time||''));
       } catch(e){ dayItems=[]; console.error(e); }
-      renderSlots(true);
-      renderEntriesTable();
+
+      renderSlots(true);            // redraw calendar rows
+      renderEntriesTable();         // redraw table
       setStatus(`Loaded ${dayItems.length} entries.`);
     }
 
-    // ---------- entries table ----------
+    /* ---------- entries table (read-only + delete) ---------- */
     function renderEntriesTable(){
       const tb = document.getElementById('entriesTbody'); tb.innerHTML='';
-      if(!dayItems.length){ tb.innerHTML = `<tr><td colspan="6" class="muted">No entries.</td></tr>`; return; }
+      if(!dayItems.length){
+        tb.innerHTML = `<tr><td colspan="6" class="muted">No entries.</td></tr>`;
+        return;
+      }
       tb.innerHTML = dayItems.map(e=>{
+        // Prefer e.scheduledAt if present (UTC ISO). Otherwise build from date/time.
         const iso = e.scheduledAt ? e.scheduledAt : `${e.date}T${e.time}:00Z`;
         const view = formatUTCAsLocal(iso, { hour:"2-digit", minute:"2-digit" });
         return `<tr data-id="${e.id}" data-time="${e.time}">
@@ -277,6 +396,8 @@
           <td><button class="btn" data-act="del">Delete</button></td>
         </tr>`;
       }).join('');
+
+      // Wire Delete buttons (uses API’s id + (date,time) for delete)
       tb.querySelectorAll('button[data-act="del"]').forEach(btn=>{
         btn.addEventListener('click', async ()=>{
           const tr = btn.closest('tr'); const id = tr.dataset.id; const time = tr.dataset.time;
@@ -287,59 +408,79 @@
       });
     }
 
-    // ---------- create form (local TZ → UTC, include groupKey) ----------
+    /* ---------- create flow (local TZ → UTC) ---------- */
     (function wireCreate(){
       const form = document.getElementById('createForm');
       const btn  = document.getElementById('createBtn');
+
       form.addEventListener('submit', async (e)=>{
         e.preventDefault();
         btn.disabled=true; btn.textContent='Creating…';
         try{
+          // Read local wall time in the viewing TZ
           const fd = new FormData(form);
-          const time = fd.get('time');                               // HH:MM (local wall time)
+          const time = fd.get('time');                               // "HH:MM"
           const iso  = toUTCISOFromSelectedTZ(activeDateISO, time);  // UTC instant
+
+          // Convert UTC instant → API fields (date HH:MM in UTC)
           const d = new Date(iso);
           const utcDate = `${d.getUTCFullYear()}-${pad(d.getUTCMonth()+1)}-${pad(d.getUTCDate())}`;
           const utcTime = `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`;
+          const groupSel = document.getElementById("group");
+          const groupKey = groupSel ? groupSel.value : undefined;
 
+
+          // IMPORTANT:
+          // - Send only groupKey; backend should map that to queue (name/ARN/ID)
+          //   based on a trusted source (e.g., server-side copy of capacity.json).
           const payload = {
-            date: utcDate, time: utcTime,
+            date: utcDate,
+            time: utcTime,
             durationMin: Number(fd.get('durationMin')||10),
             agentId: fd.get('agentId')||'',
             customer: fd.get('customer')||'',
             notes: fd.get('notes')||'',
-            scheduledAt: iso,
-            groupKey: activeGroupKey        // server derives queue from capacity.json
+            scheduledAt: iso,               // bonus clarity; backend can ignore/use
+            groupKey: document.getElementById('group')?.value
           };
+
           await Api.createEntry(payload);
           form.reset();
           await refreshDay();
-          setStatus(`Created ${time} (${utcTime} UTC) for group “${groupCfg.groups[activeGroupKey].displayName}”.`);
-        }catch(err){ alert('Create failed: ' + (err?.message||err)); }
-        finally{ btn.disabled=false; btn.textContent='Create'; }
+          setStatus(`Created ${time} (${utcTime} UTC) for group “${capacityCfg.groups[activeGroupKey].displayName}”.`);
+        }catch(err){
+          alert('Create failed: ' + (err?.message||err));
+        }finally{
+          btn.disabled=false; btn.textContent='Create';
+        }
       });
     })();
 
-    // ---------- init ----------
+    /* ---------- boot sequence ---------- */
     (async function init(){
-      // set day = today
+      // 1) Set date picker to today
       const t=new Date(); const day = `${t.getFullYear()}-${pad(t.getMonth()+1)}-${pad(t.getDate())}`;
       document.getElementById('day').value = day; activeDateISO = day;
 
-      // tz dropdown
+      // 2) Time zone dropdown (sticky)
       initTZDropdown(document.getElementById('tzSelect'));
+      // Re-render labels when TZ changes
       document.getElementById('tzSelect').addEventListener('change', ()=>{ renderHourLabels(); renderSlots(); renderEntriesTable(); });
 
-      // groups + capacity, then render
+      // 3) Load capacity.json + groups, then render calendar shell
       await loadGroupsConfig();
 
-      // tabs, data, calendar
+      // 4) Render day tabs; load entries for the day; draw the rows
       renderTabs();
       await refreshDay();
 
-      // refresh button / day picker
+      // 5) Manual refresh + date change handlers
       document.getElementById('refresh').addEventListener('click', refreshDay);
-      document.getElementById('day').addEventListener('change', async ()=>{ activeDateISO = document.getElementById('day').value; renderTabs(); await refreshDay(); });
+      document.getElementById('day').addEventListener('change', async ()=>{
+        activeDateISO = document.getElementById('day').value;
+        renderTabs();
+        await refreshDay();
+      });
     })();
   </script>
 </body>
