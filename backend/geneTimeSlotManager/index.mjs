@@ -139,6 +139,16 @@ export const handler = async (event) => {
     event?.httpMethod ||                      // REST API shape
     "";
 
+    console.info("REQ", {
+    method,
+    resource: event.resource,
+    path: event.path,
+    origin: event?.headers?.origin || event?.headers?.Origin || "",
+    qs: event.queryStringParameters || null,
+    hasBody: !!event.body
+    });
+
+
   if (method === "OPTIONS") {
     // Respond to the browser's CORS preflight quickly, with headers only
     return {
@@ -264,6 +274,8 @@ export const handler = async (event) => {
       } catch (e) {
         console.error("StartTaskContact FAILED (Confirmation)", { id: item.id, err: e });
       }
+
+      console.info("POST /entries OK", { id, date: body.date, time: body.time });
 
       return res(event, 201, stripKeys(item));
     }

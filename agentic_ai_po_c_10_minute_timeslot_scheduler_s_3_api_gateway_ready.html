@@ -149,6 +149,13 @@
   document.addEventListener("DOMContentLoaded", initTZDropdown);
   </script>
 
+<label>Group:
+  <select id="group"></select>
+</label>
+
+<div id="slots" style="display:grid;grid-template-columns:repeat(4,minmax(180px,1fr));gap:8px;margin-top:12px;"></div>
+
+
   <div class="app">
     <!-- Toolbar -->
     <div class="toolbar">
@@ -203,6 +210,16 @@
       </form>
     </div>
   </div>
+
+  <label>Group:
+  <select id="group"></select>
+    </label>
+
+    <div id="slots" style="display:grid;grid-template-columns:repeat(4,minmax(180px,1fr));gap:8px;margin-top:12px;"></div>
+
+    <!-- optional UTC readout if you already have #date and #time inputs -->
+    <input type="text" id="utcISO" readonly placeholder="UTC timestamp (ISO Z)">
+
 
   <script>
     // ================= Utilities =================
@@ -802,6 +819,113 @@
     loadDay();
   })();
   </script>
+
+    <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      // remember user's group choice locally
+      const LS_GROUP = 'sc_group_key';
+      let cfg;
+
+      // build all 10-minute times in a day: 00:00 .. 23:50
+      function allTenMinuteTimes() {
+        const out = [];
+        for (let h = 0; h < 24; h++) {
+          for (let m = 0; m < 60; m += 10) {
+            out.push(`${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`);
+          }
+        }
+        return out;
+      }
+
+      // optional: show a UTC preview if you have #date and #time inputs
+      function updateUtcPreview() {
+        const dateEl = document.getElementById('date');
+        const timeEl = document.getElementById('time');
+        const utcEl  = document.getElementById('utcISO');
+        if (!dateEl || !timeEl || !utcEl) return;
+        const date = dateEl.value;   // YYYY-MM-DD
+        const time = timeEl.value;   // HH:MM
+        if (!date || !time) return;
+        const local = new Date(`${date}T${time}:00`);
+        utcEl.value = local.toISOString(); // UTC ISO Z
+      }
+
+      async function loadConfig() {
+        const r = await fetch('capacity.json', { cache: 'no-store' });
+        cfg = await r.json();
+
+        // populate the Group dropdown
+        const groupSel = document.getElementById('group');
+        groupSel.innerHTML = '';
+        Object.entries(cfg.groups).forEach(([key, g]) => {
+          const opt = document.createElement('option');
+          opt.value = key;
+          opt.textContent = g.displayName || key;
+          groupSel.appendChild(opt);
+        });
+
+        // restore sticky choice
+        const saved = localStorage.getItem(LS_GROUP);
+        if (saved && cfg.groups[saved]) groupSel.value = saved;
+
+        groupSel.addEventListener('change', () => {
+          localStorage.setItem(LS_GROUP, groupSel.value);
+          renderSlots();
+        });
+
+        renderSlots();
+      }
+
+      function renderSlots() {
+        const groupSel = document.getElementById('group');
+        const groupKey = groupSel.value;
+        const group = cfg.groups[groupKey];
+        const slots = group.slots || {}; // "HH:MM" -> capacity
+        const times = allTenMinuteTimes();
+
+        const grid = document.getElementById('slots');
+        grid.innerHTML = '';
+
+        times.forEach(t => {
+          const cap = Number(slots[t] || 0);
+          const btn = document.createElement('button');
+          btn.textContent = `${t} — ${cap > 0 ? `open (${cap})` : 'closed'}`;
+          btn.disabled = cap <= 0;
+          btn.style.padding = '8px 10px';
+          btn.style.borderRadius = '10px';
+          btn.style.border = '1px solid #ddd';
+          btn.style.cursor = cap > 0 ? 'pointer' : 'not-allowed';
+          btn.title = cap > 0 ? `Capacity: ${cap}` : 'No capacity';
+
+          if (cap > 0) {
+            btn.addEventListener('click', () => {
+              // TODO: hook into your existing scheduling code.
+              // Example: prefill your time input then call your POST.
+              const timeEl = document.getElementById('time');
+              if (timeEl) { timeEl.value = t; updateUtcPreview(); }
+              console.log('Selected slot', t, 'group', groupKey, 'queue', group.queue);
+              // scheduleEntry({ date: ..., time: t, groupKey });  // your existing function
+            });
+          }
+
+          grid.appendChild(btn);
+        });
+      }
+
+      // wire UTC preview if those fields exist
+      const dateEl = document.getElementById('date');
+      const timeEl = document.getElementById('time');
+      if (dateEl && timeEl) {
+        dateEl.addEventListener('change', updateUtcPreview);
+        timeEl.addEventListener('change', updateUtcPreview);
+      }
+
+      // kick it off
+      loadConfig();
+    });
+  </script>
+  
+
 
   <!-- KEEP: CREATE SHIM (local date/time → UTC for API) -->
   <!--<script>
