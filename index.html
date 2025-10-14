@@ -314,10 +314,11 @@
         });
 
         // UX: double-click a row to prefill the Create form’s time input
-        row.ondblclick = ()=>{
-          if(cap<=0 || used>=cap){ alert('This timeslot is full or closed.'); return; }
-          const timeInput = document.querySelector('#createForm input[name="time"]'); if(timeInput) timeInput.value = hhmm;
+        row.onclick = ()=>{
+          if (cap <= 0 || used >= cap) { alert('This timeslot is full or closed.'); return; }
+          openModal(activeDateISO, hhmm, used, cap);
         };
+
 
         row.appendChild(tcol); row.appendChild(capCol); row.appendChild(chips);
         host.appendChild(row);
