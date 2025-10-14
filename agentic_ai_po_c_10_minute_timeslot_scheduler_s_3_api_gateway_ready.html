@@ -68,6 +68,25 @@
     .actions { display: flex; gap: 8px; justify-content: flex-end; }
   </style>
 
+  <style>
+    #slotsByHour { max-width: 1100px; margin: 16px auto; padding: 0 12px; }
+    .hour-block { margin: 10px 0 18px; }
+    .hour-title { font: 600 14px system-ui, sans-serif; color: #333; margin: 6px 0 8px; }
+    .hour-grid { display: grid; grid-template-columns: repeat(6, minmax(110px, 1fr)); gap: 6px; }
+    .slot-btn { padding: 8px 10px; border-radius: 10px; border: 1px solid #ddd; background: #fff; }
+    .slot-btn[disabled] { color: #888; background: #f7f7f7; cursor: not-allowed; }
+  </style>
+
+  <style>
+  #slotsByHour { max-width: 1100px; margin: 16px auto; padding: 0 12px; }
+  .hour-block { margin: 10px 0 18px; }
+  .hour-title { font: 600 14px system-ui, sans-serif; color: #333; margin: 6px 0 8px; }
+  .hour-grid { display: grid; grid-template-columns: repeat(6, minmax(110px, 1fr)); gap: 6px; }
+  .slot-btn { padding: 8px 10px; border-radius: 10px; border: 1px solid #ddd; background: #fff; }
+  .slot-btn[disabled] { color: #888; background: #f7f7f7; cursor: not-allowed; }
+</style>
+
+
   <!-- API client -->
   <script>
   (function () {
@@ -98,6 +117,18 @@
 </head>
 
 <body>
+  
+<label>Group:
+  <select id="group"></select>
+</label>
+
+<!-- hourly slots will render here -->
+  <div id="slotsByHour"></div>
+
+<!-- (optional) show a UTC preview if your page already has date/time inputs -->
+  <input type="text" id="utcISO" readonly placeholder="UTC timestamp (ISO Z)" style="margin-top:8px;">
+
+  
   <!-- Timezone toolbar -->
   <div id="toolbar" style="display:flex;gap:12px;align-items:center;padding:10px;border-bottom:1px solid #ddd;background:#f9fafb;">
     <strong style="font-size:14px;">Settings</strong>
@@ -219,6 +250,9 @@
 
     <!-- optional UTC readout if you already have #date and #time inputs -->
     <input type="text" id="utcISO" readonly placeholder="UTC timestamp (ISO Z)">
+
+    <!-- Hourly slots container -->
+    <div id="slotsByHour"></div>
 
 
   <script>
@@ -925,6 +959,114 @@
     });
   </script>
   
+  <script>
+  document.addEventListener('DOMContentLoaded', () => {
+    const LS_GROUP = 'sc_group_key';
+    let cfg;
+
+    function updateUtcPreview() {
+      const dateEl = document.getElementById('date');
+      const timeEl = document.getElementById('time');
+      const utcEl  = document.getElementById('utcISO');
+      if (!dateEl || !timeEl || !utcEl) return;
+      const date = dateEl.value, time = timeEl.value;
+      if (!date || !time) return;
+      const local = new Date(`${date}T${time}:00`);
+      utcEl.value = local.toISOString(); // UTC ISO Z
+    }
+
+    async function loadConfig() {
+      const r = await fetch('capacity.json', { cache: 'no-store' });
+      cfg = await r.json();
+
+      // populate Group dropdown
+      const groupSel = document.getElementById('group');
+      groupSel.innerHTML = '';
+      Object.entries(cfg.groups).forEach(([key, g]) => {
+        const opt = document.createElement('option');
+        opt.value = key;
+        opt.textContent = g.displayName || key;
+        groupSel.appendChild(opt);
+      });
+
+      // restore sticky selection
+      const saved = localStorage.getItem(LS_GROUP);
+      if (saved && cfg.groups[saved]) groupSel.value = saved;
+
+      groupSel.addEventListener('change', () => {
+        localStorage.setItem(LS_GROUP, groupSel.value);
+        renderSlots();
+      });
+
+      renderSlots();
+    }
+
+    function renderSlots() {
+      const groupSel = document.getElementById('group');
+      const groupKey = groupSel.value;
+      const group = cfg.groups[groupKey];
+      const slotsMap = group.slots || {};  // "HH:MM" -> capacity
+
+      const container = document.getElementById('slotsByHour');
+      container.innerHTML = '';
+
+      // build 24 hour sections
+      for (let h = 0; h < 24; h++) {
+        const hh = String(h).padStart(2, '0');
+
+        // create hour block
+        const block = document.createElement('section');
+        block.className = 'hour-block';
+
+        const title = document.createElement('div');
+        title.className = 'hour-title';
+        title.textContent = `${hh}:00 – ${hh}:59`;
+        block.appendChild(title);
+
+        const grid = document.createElement('div');
+        grid.className = 'hour-grid';
+
+        for (let m = 0; m < 60; m += 10) {
+          const mm = String(m).padStart(2, '0');
+          const t = `${hh}:${mm}`;
+          const cap = Number(slotsMap[t] || 0);
+
+          const btn = document.createElement('button');
+          btn.className = 'slot-btn';
+          btn.textContent = cap > 0 ? `${t}  (open ${cap})` : `${t}  (closed)`;
+          btn.disabled = cap <= 0;
+
+          if (cap > 0) {
+            btn.addEventListener('click', () => {
+              const timeEl = document.getElementById('time');
+              if (timeEl) timeEl.value = t;
+              // update optional UTC preview
+              updateUtcPreview();
+              console.log('Selected slot', t, 'group', groupKey, 'queue', group.queue);
+              // call your existing schedule function here if you have one:
+              // scheduleEntry({ date: document.getElementById('date').value, time: t, groupKey });
+            });
+          }
+
+          grid.appendChild(btn);
+        }
+
+        block.appendChild(grid);
+        container.appendChild(block);
+      }
+    }
+
+    // hook UTC preview if those inputs exist
+    const dateEl = document.getElementById('date');
+    const timeEl = document.getElementById('time');
+    if (dateEl && timeEl) {
+      dateEl.addEventListener('change', updateUtcPreview);
+      timeEl.addEventListener('change', updateUtcPreview);
+    }
+
+    loadConfig();
+  });
+  </script>
 
 
   <!-- KEEP: CREATE SHIM (local date/time → UTC for API) -->
