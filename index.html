@@ -315,26 +315,23 @@
 
         // UX: double-click a row to prefill the Create form’s time input
         row.onclick = () => {
-          if (cap <= 0 || used >= cap) {
+          // Read the HH:MM time from the row itself (always set during render)
+          const time = row.dataset.time;
+
+          // Recalculate current usage/capacity for safety
+          const usedNow = eventsFor(activeDateISO, time).length;
+          const capNow  = capacityFor(activeDateISO, time);
+
+          if (capNow <= 0 || usedNow >= capNow) {
             alert('This timeslot is full or closed.');
             return;
           }
 
-          // Prefill the bottom Create form (day + time) and jump to it
-          const dayEl = document.getElementById('day');
-          if (dayEl) dayEl.value = activeDateISO;
-
-          const form = document.getElementById('createForm');
-          if (form && form.elements) {
-            const timeInput = form.elements['time'];
-            if (timeInput) timeInput.value = ts;
-
-            if (typeof updateUtcPreview === 'function') updateUtcPreview();
-
-            form.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            (form.elements['customer'] || form.elements['agentId'] || form.elements[0]).focus();
-          }
+          // If a real modal exists, this calls it; if not, our shim will prefill the form
+          openModal(activeDateISO, time, usedNow, capNow);
         };
+
+
 
 
 
