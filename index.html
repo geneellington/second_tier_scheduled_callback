@@ -316,7 +316,7 @@
         // UX: double-click a row to prefill the Create form’s time input
         row.onclick = ()=>{
           if (cap <= 0 || used >= cap) { alert('This timeslot is full or closed.'); return; }
-          openModal(activeDateISO, hhmm, used, cap);
+          openModal(activeDateISO, ts, used, cap);
         };
 
 
