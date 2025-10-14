@@ -314,10 +314,28 @@
         });
 
         // UX: double-click a row to prefill the Create form’s time input
-        row.onclick = ()=>{
-          if (cap <= 0 || used >= cap) { alert('This timeslot is full or closed.'); return; }
-          openModal(activeDateISO, ts, used, cap);
+        row.onclick = () => {
+          if (cap <= 0 || used >= cap) {
+            alert('This timeslot is full or closed.');
+            return;
+          }
+
+          // Prefill the bottom Create form (day + time) and jump to it
+          const dayEl = document.getElementById('day');
+          if (dayEl) dayEl.value = activeDateISO;
+
+          const form = document.getElementById('createForm');
+          if (form && form.elements) {
+            const timeInput = form.elements['time'];
+            if (timeInput) timeInput.value = ts;
+
+            if (typeof updateUtcPreview === 'function') updateUtcPreview();
+
+            form.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            (form.elements['customer'] || form.elements['agentId'] || form.elements[0]).focus();
+          }
         };
+
 
 
         row.appendChild(tcol); row.appendChild(capCol); row.appendChild(chips);
@@ -484,5 +502,29 @@
       });
     })();
   </script>
+
+  <script>
+// Back-compat shim: if any code calls openModal(), just prefill the bottom form.
+if (typeof window.openModal !== 'function') {
+  window.openModal = function(dateISO, time, used, cap) {
+    // Fill Day
+    const dayEl = document.getElementById('day');
+    if (dayEl && dateISO) dayEl.value = dateISO;
+
+    // Fill Time + focus form
+    const form = document.getElementById('createForm');
+    if (form && form.elements) {
+      const timeInput = form.elements['time'];
+      if (timeInput && time) timeInput.value = time;
+
+      if (typeof updateUtcPreview === 'function') updateUtcPreview();
+
+      form.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      (form.elements['customer'] || form.elements['agentId'] || form.elements[0]).focus();
+    }
+  };
+}
+</script>
+
 </body>
 </html>
