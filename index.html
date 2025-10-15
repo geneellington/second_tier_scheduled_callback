@@ -315,21 +315,19 @@
 
         // UX: double-click a row to prefill the Create form’s time input
         row.onclick = () => {
-          // Read the HH:MM time from the row itself (always set during render)
-          const time = row.dataset.time;
-
-          // Recalculate current usage/capacity for safety
-          const usedNow = eventsFor(activeDateISO, time).length;
-          const capNow  = capacityFor(activeDateISO, time);
+          const time = row.dataset.time;              // HH:MM on this row
+          const usedNow = bookedCount(time);          // how many are booked in this slot today
+          const capNow  = capacityForHHMM(time);      // capacity from capacity.json for this group
 
           if (capNow <= 0 || usedNow >= capNow) {
             alert('This timeslot is full or closed.');
             return;
           }
 
-          // If a real modal exists, this calls it; if not, our shim will prefill the form
+          // If a real modal exists, this calls it; otherwise your shim prefills the form
           openModal(activeDateISO, time, usedNow, capNow);
         };
+
 
 
 
@@ -519,6 +517,15 @@ if (typeof window.openModal !== 'function') {
       form.scrollIntoView({ behavior: 'smooth', block: 'center' });
       (form.elements['customer'] || form.elements['agentId'] || form.elements[0]).focus();
     }
+  };
+}
+</script>
+
+<script>
+if (typeof window.eventsFor !== 'function') {
+  window.eventsFor = function (_dateISO, hhmm) {
+    try { return Array.isArray(dayItems) ? dayItems.filter(e => e.time === hhmm) : []; }
+    catch { return []; }
   };
 }
 </script>
