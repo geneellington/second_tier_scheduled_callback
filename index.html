@@ -589,28 +589,6 @@ document.getElementById('mForm').addEventListener('submit', async (e) => {
 
 
 
-// Back-compat shim: if any code calls openModal(), just prefill the bottom form.
-if (typeof window.openModal !== 'function') {
-  window.openModal = function(dateISO, time, used, cap) {
-    // Fill Day
-    const dayEl = document.getElementById('day');
-    if (dayEl && dateISO) dayEl.value = dateISO;
-
-    // Fill Time + focus form
-    const form = document.getElementById('createForm');
-    if (form && form.elements) {
-      const timeInput = form.elements['time'];
-      if (timeInput && time) timeInput.value = time;
-
-      if (typeof updateUtcPreview === 'function') updateUtcPreview();
-
-      form.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      (form.elements['customer'] || form.elements['agentId'] || form.elements[0]).focus();
-    }
-  };
-}
-</script>
-
 <script>
 if (typeof window.eventsFor !== 'function') {
   window.eventsFor = function (_dateISO, hhmm) {
@@ -619,6 +597,95 @@ if (typeof window.eventsFor !== 'function') {
   };
 }
 </script>
+
+
+<!-- =========================
+     MODAL PACK (Add Entry)
+     ========================= -->
+<div id="addModal" style="position:fixed;inset:0;display:none;place-items:center;background:rgba(0,0,0,.35);z-index:1000">
+  <div style="background:#fff;border:1px solid #e6e8ef;border-radius:12px;padding:16px;min-width:320px;max-width:92vw;box-shadow:0 10px 35px rgba(0,0,0,.15)">
+    <h3 style="margin:0 0 6px">Add Entry</h3>
+    <p id="mWhen" style="margin:0 0 12px;color:#6a7280;font-size:12px"></p>
+    <form id="mForm" style="display:grid;gap:10px">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <label>Agent ID <input id="mAgentId" /></label>
+        <label>Duration (min) <input id="mDuration" type="number" min="10" step="10" value="10" /></label>
+      </div>
+      <label>Customer <input id="mCustomer" /></label>
+      <label>Phone <input id="mPhone" /></label>
+      <label>Notes <input id="mNotes" /></label>
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:6px">
+        <button type="button" id="mCancel" class="btn">Cancel</button>
+        <button type="submit" id="mSave"  class="btn brand">Save</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+// ---- Modal controller (global) ----
+(function(){
+  let ctx = null;
+
+  function fmt(iso){
+    return new Date(iso).toLocaleString(undefined, { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' });
+  }
+  function show(){ document.getElementById('addModal').style.display = 'grid'; }
+  function hide(){ document.getElementById('addModal').style.display = 'none'; }
+
+  // Real openModal used by the row click handler
+  window.openModal = function(dateISO, hhmm, used, cap){
+    ctx = { dateISO, hhmm };
+    const whenIso = `${dateISO}T${hhmm}:00Z`; // UTC instant for the slot
+    const p = document.getElementById('mWhen');
+    if (p) p.textContent = `For ${fmt(whenIso)}  (used ${used}/${cap})`;
+
+    // Prefill/clear
+    document.getElementById('mAgentId').value = '';
+    document.getElementById('mDuration').value = '10';
+    document.getElementById('mCustomer').value = '';
+    document.getElementById('mPhone').value = '';
+    document.getElementById('mNotes').value = '';
+
+    show();
+    document.getElementById('mCustomer').focus();
+  };
+
+  // Wire buttons once
+  document.getElementById('mCancel').addEventListener('click', hide);
+  document.getElementById('mForm').addEventListener('submit', async (e)=>{
+    e.preventDefault();
+    if (!ctx) return;
+    const { dateISO, hhmm } = ctx;
+
+    // Build payload (send UTC date/time; backend maps groupKey → queue)
+    const payload = {
+      date: dateISO,
+      time: hhmm,
+      durationMin: Number(document.getElementById('mDuration').value || 10),
+      agentId:     document.getElementById('mAgentId').value.trim(),
+      customer:    document.getElementById('mCustomer').value.trim(),
+      phone:       document.getElementById('mPhone').value.trim(),
+      notes:       document.getElementById('mNotes').value.trim(),
+      scheduledAt: `${dateISO}T${hhmm}:00Z`,
+      groupKey:    document.getElementById('group')?.value
+    };
+
+    try {
+      await Api.createEntry(payload);
+      hide(); ctx = null;
+      if (typeof refreshDay === 'function') await refreshDay();
+    } catch (err) {
+      alert('Create failed: ' + (err?.message || err));
+    }
+  });
+})();
+</script>
+<!-- =========================
+     /MODAL PACK
+     ========================= -->
+
+
 
 </body>
 </html>
