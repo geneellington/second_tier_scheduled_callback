@@ -556,68 +556,68 @@
 
 
 <script>
-// Simple modal control
-let __modalCtx = null;
+  // Simple modal control
+  let __modalCtx = null;
 
-function showModal()   { document.getElementById('addModal').style.display = 'grid'; }
-function hideModal()   { document.getElementById('addModal').style.display = 'none'; }
-function fmt(iso)      { return new Date(iso).toLocaleString(undefined, { hour:'2-digit', minute:'2-digit', month:'short', day:'numeric' }); }
+  function showModal()   { document.getElementById('addModal').style.display = 'grid'; }
+  function hideModal()   { document.getElementById('addModal').style.display = 'none'; }
+  function fmt(iso)      { return new Date(iso).toLocaleString(undefined, { hour:'2-digit', minute:'2-digit', month:'short', day:'numeric' }); }
 
-// Real openModal used by the timeslot click
-function openModal(dateISO, hhmm, used, cap) {
-  __modalCtx = { dateISO, hhmm };
-  // Fill header text
-  const whenIso = `${dateISO}T${hhmm}:00Z`; // UTC instant
-  document.getElementById('mWhen').textContent =
-    `For ${fmt(whenIso)} (used ${used}/${cap})`;
+  // Real openModal used by the timeslot click
+  function openModal(dateISO, hhmm, used, cap) {
+    __modalCtx = { dateISO, hhmm };
+    // Fill header text
+    const whenIso = `${dateISO}T${hhmm}:00Z`; // UTC instant
+    document.getElementById('mWhen').textContent =
+      `For ${fmt(whenIso)} (used ${used}/${cap})`;
 
-  // Prefill some fields (optional)
-  document.getElementById('mAgentId').value = '';
-  document.getElementById('mDuration').value = '10';
-  document.getElementById('mCustomer').value = '';
-  document.getElementById('mPhone').value = '';
-  document.getElementById('mNotes').value = '';
+    // Prefill some fields (optional)
+    document.getElementById('mAgentId').value = '';
+    document.getElementById('mDuration').value = '10';
+    document.getElementById('mCustomer').value = '';
+    document.getElementById('mPhone').value = '';
+    document.getElementById('mNotes').value = '';
 
-  showModal();
-  document.getElementById('mCustomer').focus();
-}
-
-// Wire modal buttons
-document.getElementById('mCancel').addEventListener('click', hideModal);
-document.getElementById('mForm').addEventListener('submit', async (e) => {
-  e.preventDefault();
-  if (!__modalCtx) return;
-  const { dateISO, hhmm } = __modalCtx;
-
-  // Build payload (send UTC date/time; backend maps groupKey→queue)
-  const dMin   = Number(document.getElementById('mDuration').value || 10);
-  const agent  = document.getElementById('mAgentId').value.trim();
-  const cust   = document.getElementById('mCustomer').value.trim();
-  const phone  = document.getElementById('mPhone').value.trim();
-  const notes  = document.getElementById('mNotes').value.trim();
-  const group  = document.getElementById('group')?.value;
-
-  const payload = {
-    date: dateISO,
-    time: hhmm,
-    durationMin: dMin,
-    agentId: agent,
-    customer: cust,
-    phone,
-    notes,
-    scheduledAt: `${dateISO}T${hhmm}:00Z`,
-    groupKey: group
-  };
-
-  try {
-    await Api.createEntry(payload);
-    hideModal();
-    __modalCtx = null;
-    await (typeof refreshDay === 'function' ? refreshDay() : Promise.resolve());
-  } catch (err) {
-    alert('Create failed: ' + (err?.message || err));
+    showModal();
+    document.getElementById('mCustomer').focus();
   }
-});
+
+  // Wire modal buttons
+  document.getElementById('mCancel').addEventListener('click', hideModal);
+  document.getElementById('mForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (!__modalCtx) return;
+    const { dateISO, hhmm } = __modalCtx;
+
+    // Build payload (send UTC date/time; backend maps groupKey→queue)
+    const dMin   = Number(document.getElementById('mDuration').value || 10);
+    const agent  = document.getElementById('mAgentId').value.trim();
+    const cust   = document.getElementById('mCustomer').value.trim();
+    const phone  = document.getElementById('mPhone').value.trim();
+    const notes  = document.getElementById('mNotes').value.trim();
+    const group  = document.getElementById('group')?.value;
+
+    const payload = {
+      date: dateISO,
+      time: hhmm,
+      durationMin: dMin,
+      agentId: agent,
+      customer: cust,
+      phone,
+      notes,
+      scheduledAt: `${dateISO}T${hhmm}:00Z`,
+      groupKey: group
+    };
+
+    try {
+      await Api.createEntry(payload);
+      hideModal();
+      __modalCtx = null;
+      await (typeof refreshDay === 'function' ? refreshDay() : Promise.resolve());
+    } catch (err) {
+      alert('Create failed: ' + (err?.message || err));
+    }
+  });
 </script>
 
 
