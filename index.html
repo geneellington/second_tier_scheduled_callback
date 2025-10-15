@@ -208,7 +208,7 @@
         <label>Duration (min) <input name="durationMin" type="number" min="10" step="10" value="10" required/></label>
         <label>Agent ID <input name="agentId" required/></label>
         <label>Customer <input name="customer"/></label>
-        <label>Notes <input name="notes"/></label>
+        <label>Notes <input name="notes" rows="3"/></label>
         <button id="createBtn" class="btn brand" type="submit">Create</button>
       </form>
     </div>
@@ -239,7 +239,15 @@
         <label>Duration (min) <input id="mDuration" type="number" min="10" step="10" value="10" /></label>
       </div>
       <label>Customer <input id="mCustomer" /></label>
-      <label>Phone <input id="mPhone" /></label>
+      <label>Phone
+        <input id="mPhone"
+              type="tel"
+              inputmode="tel"
+              placeholder="+1XXXXXXXXXX"
+              pattern="^\+1\d{10}$"
+              title="Use +1 followed by 10 digits (e.g., +15551234567)"/>
+        <small class="hint" style="color:#6a7280">Format: <code>+1XXXXXXXXXX</code></small>
+      </label>
       <label>Notes <input id="mNotes" /></label>
       <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:6px">
         <button type="button" id="mCancel" class="btn">Cancel</button>
@@ -520,7 +528,32 @@
     })();
   </script>
 
-  <script>
+
+<!--  Keeps only digits and auto-adds +1 for the phone number field -->
+    <script>
+    (function () {
+      const el = document.getElementById('mPhone');
+      if (!el) return;
+
+      function normalize(val) {
+        const digits = (val || '').replace(/\D/g,'');
+        if (digits.startsWith('1')) return '+1' + digits.slice(1, 11);
+        return '+1' + digits.slice(0, 10);
+      }
+
+      el.addEventListener('input', () => {
+        const caret = el.selectionStart;
+        const before = el.value;
+        el.value = normalize(el.value);
+        // simple caret keep: if we added '+', move right
+        if (el.value.length > before.length && caret !== null) {
+          el.setSelectionRange(caret + (el.value.startsWith('+') ? 1 : 0), caret + (el.value.startsWith('+') ? 1 : 0));
+        }
+        el.setCustomValidity(/^\+1\d{10}$/.test(el.value) ? '' : 'Use +1 followed by 10 digits');
+      });
+    })();
+    </script>
+
 
 <script>
 // Simple modal control
@@ -613,7 +646,9 @@ if (typeof window.eventsFor !== 'function') {
       </div>
       <label>Customer <input id="mCustomer" /></label>
       <label>Phone <input id="mPhone" /></label>
-      <label>Notes <input id="mNotes" /></label>
+      <label>Notes
+        <textarea id="mNotes" rows="4" style="width:100%;resize:vertical"></textarea>
+      </label>
       <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:6px">
         <button type="button" id="mCancel" class="btn">Cancel</button>
         <button type="submit" id="mSave"  class="btn brand">Save</button>
