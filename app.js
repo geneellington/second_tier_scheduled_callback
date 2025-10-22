@@ -97,47 +97,7 @@ const Store = (() => {
 
   const update = (date, id, patch) => { const all = safeParseLS(sKey, {}); if (!all[date]) return; all[date] = all[date].map(e => e.id === id ? { ...e, ...patch } : e); localStorage.setItem(sKey, JSON.stringify(all)); };
 
-  async function apiCreate(base, useApi, entry) {
-    if (!useApi || !base) return { ok: true, id: entry.id };
-
-    try {
-      const d = entry.scheduledAt.slice(0, 10);
-      const t = entry.scheduledAt.slice(11, 16);
-
-      const body = {
-        // send our id too, but server may override
-        id: entry.id,
-        date: d,
-        time: t,
-        groupKey: entry.queueKey,
-        customer: entry.customerName || entry.name || "",
-        phone: entry.phone,
-        agentId: entry.agentId || "",
-        notes: entry.notes || "",
-        capacityKey: entry.capacityKey || "default",
-      };
-
-      const res = await fetch(`${base}/entries`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-
-      const text = await res.text();
-      if (!res.ok) throw new Error(text || res.statusText);
-      const json = text ? JSON.parse(text) : {};
-
-      // Server returns the created item; prefer its id
-      return { ok: true, id: json.id || entry.id, server: json };
-    } catch (err) {
-      console.error("API create failed:", err);
-      alert("API create failed: " + (err && err.message ? err.message : err));
-      return { ok: false };
-    }
-  }
-
-
-  async function apiUpdate(base, useApi, id, patch, scheduledAtUtc) {
+    async function apiUpdate(base, useApi, id, patch, scheduledAtUtc) {
     if (!useApi || !base) return { ok: true };
     try {
       const curDate = scheduledAtUtc.slice(0, 10);
@@ -179,43 +139,56 @@ const Store = (() => {
   }
 
   async function apiCreate(base, useApi, entry) {
-  if (!useApi || !base) return { ok: true, id: entry.id };
-  try {
-    // Derive date/time (UTC) for the server
-    const d = entry.scheduledAt.slice(0, 10);
-    const t = entry.scheduledAt.slice(11, 16);
+    if (!useApi || !base) return { ok: true, id: entry.id };
 
-    // Shape the payload the Lambda expects
-    const body = {
-      id: entry.id,                                    // we send ours; server may override
-      date: d,
-      time: t,
-      groupKey: entry.queueKey,                        // IMPORTANT: queueKey -> groupKey
-      customer: entry.customerName || entry.name || "",// Lambda uses "customer"
-      phone: entry.phone,                              // E.164
-      agentId: entry.agentId || "",
-      notes: entry.notes || "",
-      capacityKey: entry.capacityKey || "default"
-    };
+    try {
+      const d = entry.scheduledAt.slice(0, 10);
+      const t = entry.scheduledAt.slice(11, 16);
 
-    const res = await fetch(`${base}/entries`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
-    });
+      // --- TZ: use the UI-selected timezone for the customer ---
+      const tzId =
+        (typeof currentTz === 'function' && currentTz()) ||
+        (tzSelect && tzSelect.value) ||
+        (Intl.DateTimeFormat().resolvedOptions().timeZone) ||
+        'UTC';
 
-    const text = await res.text();
-    if (!res.ok) throw new Error(text || res.statusText);
-    const json = text ? JSON.parse(text) : {};
+      // For now we use the same string for display; you can later map it to “Arizona Time”, etc.
+      const tzLabel = tzId;
+      // ---------------------------------------------------------
 
-    // Return the server’s id + object so caller can adopt them
-    return { ok: true, id: json.id || entry.id, server: json };
+      const body = {
+        id: entry.id,
+        date: d,
+        time: t,
+        groupKey: entry.queueKey,
+        customer: entry.customerName || entry.name || "",
+        phone: entry.phone,
+        agentId: entry.agentId || "",
+        notes: entry.notes || "",
+        capacityKey: entry.capacityKey || "default",
+
+        // --- NEW fields we send to backend ---
+        customerTz: tzId || undefined,
+        customerTzLabel: tzLabel || undefined
+      };
+
+      const res = await fetch(`${base}/entries`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+
+      const text = await res.text();
+      if (!res.ok) throw new Error(text || res.statusText);
+      const json = text ? JSON.parse(text) : {};
+      return { ok: true, id: json.id || entry.id, server: json };
     } catch (err) {
-      console.error('API create failed:', err);
-      alert('API create failed: ' + (err && err.message ? err.message : err));
+      console.error("API create failed:", err);
+      alert("API create failed: " + (err && err.message ? err.message : err));
       return { ok: false };
     }
   }
+
 
 
   const clearAll = () => { try { localStorage.removeItem(sKey); localStorage.removeItem(settingsKey); localStorage.removeItem(uiKey); localStorage.removeItem(configKey); } catch(_){} };
@@ -247,12 +220,63 @@ async function loadCapacity() {
 
 function applyConfig(obj){
   if (!obj) return;
-  if (obj.version >= 2 && obj.groups) capacityGroups = obj.groups;
-  else if (obj.capacity) capacity = obj.capacity;
+
+  // Capacity model
+  if (obj.version >= 2 && obj.groups) {
+    capacityGroups = obj.groups;
+  } else if (obj.capacity) {
+    capacity = obj.capacity;
+  }
+
+  // NEW: API base + defaults + locks
+  const cur  = Store.getSettings() || {};
+  const next = { ...cur };
+  const d    = obj.defaults || {};
+  const lock = obj.lock || {};
+
+  // Helper to apply a default and optionally lock the UI control
+  function applyField(key, val, lockFlag, el, onSet){
+    if (lockFlag) {
+      if (val != null) next[key] = val;           // enforce central value
+      if (el) { el.disabled = true; el.title = 'Managed by configuration'; if (val != null && 'value' in el) el.value = val; }
+      if (onSet) onSet(val);
+      return;
+    }
+    // Not locked → seed only if user hasn’t set it yet
+    if (cur[key] == null && val != null) {
+      next[key] = val;
+      if (el && 'value' in el) el.value = val;
+      if (onSet) onSet(val);
+    }
+  }
+
+  // API base
+  if (obj.apiBase) {
+    next.apiBase = obj.apiBase;
+    next.useApi  = true;
+    if (typeof apiBaseEl !== 'undefined' && apiBaseEl) {
+      apiBaseEl.value = obj.apiBase;
+      apiBaseEl.disabled = lock.apiBase === true;
+      apiBaseEl.title = lock.apiBase ? 'Managed by configuration' : '';
+    }
+    if (typeof useApiEl !== 'undefined' && useApiEl) useApiEl.checked = true;
+  }
+
+  // Defaults (tz, capTz, queueKey, notifyAhead)
+  applyField('tz', d.tz, !!lock.tz, tzSelect);
+  applyField('capTz', d.capTz, !!lock.capTz, capTzSelect);
+  applyField('queueKey', d.queueKey, !!lock.queueKey, queueSelect, (v) => {
+    if (queueSelectTop && v != null) queueSelectTop.value = v;
+  });
+  applyField('notifyAhead', d.notifyAhead, !!lock.notifyAhead, notifyAheadEl);
+
+  Store.saveSettings(next);
+
   populateQueues();
   flashTag('Config loaded');
   try { Store.saveConfig(obj); } catch(_) {}
 }
+
 
 async function loadConfigFromUrl(url){
   try { const res = await fetch(url, { cache: 'no-store' }); if (!res.ok) throw new Error(`HTTP ${res.status}`); const json = await res.json(); applyConfig(json); }
@@ -664,20 +688,33 @@ async function apiCreateInline(base, useApi, entry) {
   if (!useApi || !base) return { ok: true, id: entry.id };
 
   try {
-    // derive UTC date/time the Lambda expects
     const d = entry.scheduledAt.slice(0, 10);
     const t = entry.scheduledAt.slice(11, 16);
 
+    // --- TZ: use the UI-selected timezone for the customer ---
+    const tzId =
+      (typeof currentTz === 'function' && currentTz()) ||
+      (tzSelect && tzSelect.value) ||
+      (Intl.DateTimeFormat().resolvedOptions().timeZone) ||
+      'UTC';
+
+    // For now we use the same string for display; you can later map it to “Arizona Time”, etc.
+    const tzLabel = tzId;
+    // ---------------------------------------------------------
+
     const body = {
-      id: entry.id,                                     // server may override
+
+      id: entry.id,
       date: d,
       time: t,
-      groupKey: entry.queueKey,                         // IMPORTANT: queueKey -> groupKey
-      customer: entry.customerName || entry.name || "", // Lambda uses "customer"
-      phone: entry.phone,                               // E.164
+      groupKey: entry.queueKey,
+      customer: entry.customerName || entry.name || "",
+      phone: entry.phone,
       agentId: entry.agentId || "",
       notes: entry.notes || "",
-      capacityKey: entry.capacityKey || "default"
+      capacityKey: entry.capacityKey || "default",
+      customerTz: tzId || undefined,
+      customerTzLabel: tzLabel || undefined
     };
 
     const res = await fetch(`${base}/entries`, {
@@ -689,8 +726,6 @@ async function apiCreateInline(base, useApi, entry) {
     const text = await res.text();
     if (!res.ok) throw new Error(text || res.statusText);
     const json = text ? JSON.parse(text) : {};
-
-    // hand back server id/object
     return { ok: true, id: json.id || entry.id, server: json };
   } catch (err) {
     console.error('API create failed:', err);
@@ -1012,6 +1047,20 @@ document.addEventListener('DOMContentLoaded', () => {
     try {
       restoreUi();
       populateTimezoneOptions();
+      // ---- NEW: try to auto-load an app config file ----
+      const params = new URLSearchParams(location.search);
+      const tenant = params.get('tenant'); // optional multi-tenant via ?tenant=acme
+      const bakedConfigUrl =
+        // 1) allow a meta override if you want to set it in HTML
+        document.querySelector('meta[name="app-config-url"]')?.content
+        // 2) enable multi-tenant file naming
+        || (tenant ? `config/${tenant}.json` : null)
+        // 3) default to app-config.json in the same origin
+        || 'app-config.json';
+
+      try { await loadConfigFromUrl(bakedConfigUrl); } catch (_) { /* ignore if missing */ }
+      // -----------------------------------------------
+
       await loadCapacity();
       try {
         const saved = Store.getSavedConfig();
