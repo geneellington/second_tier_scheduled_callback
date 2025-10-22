@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "apiBase": "https://your-api.example.com/prod",
+  "apiBase": "https://f36ru2h4ua.execute-api.us-east-1.amazonaws.com/prod",
   "defaults": {
     "notifyAhead": 15,
     "tz": "America/Phoenix",
