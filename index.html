@@ -30,7 +30,7 @@
     /* Layout */
     .container {
       display: grid;
-      grid-template-columns: 340px 1fr; /* left column roomy for config */
+      grid-template-columns: 340px 1fr;
       gap: 20px;
       padding: 20px;
       max-width: 1400px;
@@ -72,9 +72,10 @@
     .btn { display: inline-flex; align-items: center; gap: 8px; background: linear-gradient(180deg, #2a72ff, #1e54d8); color: white; border: none; padding: 10px 14px; border-radius: 12px; cursor: pointer; font-weight: 600; box-shadow: 0 6px 20px rgba(77,163,255,.25); transition: transform .06s ease, filter .15s ease; }
     .btn:hover { filter: brightness(1.06); }
     .btn:active { transform: translateY(1px); }
+    .btn.danger { background: linear-gradient(180deg, #ff5a5f, #e23c39); color: white; box-shadow: 0 6px 20px rgba(255,90,95,.25); }
     .btn.muted { background: rgba(255,255,255,.08); color: var(--text); box-shadow: none; border: 1px solid rgba(148,163,184,.18); }
 
-    /* Minimal gear button (standalone icon) */
+    /* Minimal gear button */
     .gear-btn { margin-left: auto; width: 26px; height: 26px; padding: 0; background: transparent; border: none; box-shadow: none; color: var(--text); cursor: pointer; opacity: .9; flex-shrink: 0; }
     .gear-btn:hover { opacity: 1; transform: rotate(20deg); transition: transform .2s ease; }
     .gear-btn:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--ring); border-radius: 50%; }
@@ -90,7 +91,6 @@
 
     .badge { font-size: 12px; padding: 4px 8px; border-radius: 999px; border: 1px solid rgba(148,163,184,.18); }
 
-    /* Header layout inside Timeslots card */
     .header-row { display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0; }
     .header-controls { display: grid; grid-auto-flow: column; gap: 10px; align-items: center; }
     .header-controls > * { min-width: 160px; }
@@ -100,7 +100,10 @@
       .header-controls > * { width: 100%; }
     }
 
-    /* Entries table */
+    /* Callout for empty slots / config issues */
+    .callout { border: 1px solid rgba(148,163,184,.25); background: rgba(255,255,255,.04); border-radius: 12px; padding: 12px; }
+
+    /* Table */
     table { width: 100%; border-collapse: collapse; }
     th, td { text-align: left; padding: 10px; border-bottom: 1px solid rgba(148,163,184,.12); }
     th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .6px; }
@@ -126,16 +129,24 @@
 
     .footer { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 16px; border-top: 1px solid rgba(148,163,184,.10); }
 
-    /* Force dark theme for dropdowns (timezone/queue) */
+    /* Dark dropdowns */
     select, .header-controls select { background-color: #0f1629 !important; color: var(--text) !important; border: 1px solid rgba(148,163,184,.35) !important; }
     select option, .header-controls select option { background-color: #0f1629; color: var(--text); }
     select option:checked { background-color: #2a72ff; color: #fff; }
     select:focus { border-color: var(--accent); box-shadow: 0 0 0 4px var(--ring); }
+  
+    /* Slot inline entries */
+    .slot-entries { display:flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+    .chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border: 1px solid rgba(148,163,184,.20); background: rgba(255,255,255,.06); border-radius: 999px; font-size: 12px; white-space: nowrap; }
+    .chip .meta { color: var(--muted); font-weight: 600; }
+    .chip .kill { cursor: pointer; padding: 0 6px; border-radius: 8px; }
+    .chip .kill:hover { background: rgba(255,255,255,.14); color: var(--danger); }
+
   </style>
 </head>
 <body>
   <div class="container" id="container">
-    <!-- LEFT PANEL: Date picker + Settings (can be collapsed) -->
+    <!-- LEFT PANEL: Schedule + Settings (collapsible) -->
     <div class="left-panel stack">
       <div class="card">
         <div class="card-header">
@@ -175,13 +186,22 @@
             <div>
               <label>Timezone</label>
               <select id="tzSelect"></select>
-              <div class="help">Affects slot labels and how <code>scheduledAt</code>/<code>notifyAt</code> are computed.</div>
+              <div class="help">Shows times in this zone and computes <code>scheduledAt</code>/<code>notifyAt</code>.</div>
             </div>
             <div>
               <label>Queue</label>
               <select id="queueSelect"></select>
-              <div class="help">Select a queue to view its available times from <code>capacity.json</code>.</div>
+              <div class="help">Select a queue to view its times from <code>capacity.json</code>.</div>
             </div>
+          </div>
+
+          <div class="grid-2" style="margin-top: 10px;">
+            <div>
+              <label>Capacity Timezone</label>
+              <select id="capTzSelect"></select>
+              <div class="help">Interpret times in <code>capacity.json</code> as wall‑clock in this zone (e.g., America/New_York).</div>
+            </div>
+            <div></div>
           </div>
 
           <div class="row" style="margin-top:10px;">
@@ -205,15 +225,16 @@
                 <input id="useApi" type="checkbox" />
                 <span class="slider"></span>
               </label>
-              <span>Use API for create</span>
+              <span>Use API for writes (create/update/delete)</span>
             </div>
             <div style="text-align:right">
               <button class="btn muted" id="saveSettings">Save Settings</button>
             </div>
           </div>
 
-          <div style="margin-top:12px;">
-            <span class="help">Default behavior still supports uniform capacity via <code>capacity.json</code> with <code>{"default":2}</code>. For queue‑specific times, provide v2 format with <code>{ version, groups }</code>.</span>
+          <div class="grid-2" style="margin-top: 10px;">
+            <button class="btn muted" id="resetConfigBtn" type="button">Reset Config</button>
+            <button class="btn muted" id="resetLayoutBtn" type="button">Reset Layout</button>
           </div>
         </div>
       </div>
@@ -236,13 +257,13 @@
               </div>
               <span class="tag" id="dateTag"></span>
             </div>
+            <button class="gear-btn" id="toggleConfigBtn" title="Hide settings panel" aria-pressed="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"/>
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c0 .66.39 1.26 1 1.51.31.13.65.2 1 .2H21a2 2 0 1 1 0 4h-.09c-.35 0-.69.07-1 .2-.61.25-1 .85-1 1.51Z"/>
+              </svg>
+            </button>
           </div>
-          <button class="gear-btn" id="toggleConfigBtn" title="Hide settings panel" aria-pressed="true">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"/>
-              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c0 .66.39 1.26 1 1.51.31.13.65.2 1 .2H21a2 2 0 1 1 0 4h-.09c-.35 0-.69.07-1 .2-.61.25-1 .85-1 1.51Z"/>
-            </svg>
-          </button>
         </div>
         <div class="card-body">
           <div class="slots" id="slots"></div>
@@ -261,6 +282,7 @@
                 <th>Time (Local)</th>
                 <th>scheduledAt (UTC)</th>
                 <th>notifyAt (UTC)</th>
+                <th>Customer</th>
                 <th>Phone</th>
                 <th>Queue</th>
                 <th>Notes</th>
@@ -274,7 +296,7 @@
     </div>
   </div>
 
-  <!-- CREATE ENTRY MODAL (queue selected outside) -->
+  <!-- CREATE ENTRY MODAL -->
   <dialog id="entryModal">
     <div class="modal-header">
       <div style="display:flex; align-items:center; gap:10px;">
@@ -310,7 +332,11 @@
         </div>
       </div>
 
-      <div class="grid-2" style="margin-top:10px;">
+      <div class="grid-3" style="margin-top:10px;">
+        <div>
+          <label>Customer Name</label>
+          <input id="mName" type="text" placeholder="First Last" />
+        </div>
         <div>
           <label>Phone</label>
           <input id="mPhone" type="text" placeholder="+1XXXXXXXXXX" />
@@ -327,361 +353,12 @@
       </div>
     </div>
     <div class="footer">
+      <button class="btn danger" id="deleteBtn" style="margin-right:auto; display:none;">Delete</button>
       <button class="btn muted" id="cancelBtn">Cancel</button>
       <button class="btn" id="createBtn">Create Entry</button>
     </div>
   </dialog>
 
-  <script>
-    // -------- Utilities --------
-    const pad2 = (n) => String(n).padStart(2, '0');
-    const fmtLocalDate = (d) => `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`;
-    const fmtLocalTime = (d) => `${pad2(d.getHours())}:${pad2(Math.floor(d.getMinutes()/10)*10)}`;
-
-    function uuidv4() { return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => { const r = crypto.getRandomValues(new Uint8Array(1))[0] & 15; const v = c === 'x' ? r : (r & 0x3 | 0x8); return v.toString(16); }); }
-
-    function sortTimesAsc(a, b){ const [ah, am] = a.split(':').map(Number); const [bh, bm] = b.split(':').map(Number); return ah !== bh ? ah - bh : am - bm; }
-
-    // Convert wall time in selected timezone to UTC ISO using Intl
-    function tzWallToUtc(y, mo, da, hh, mm, zone){
-      const dtf = new Intl.DateTimeFormat('en-US', { timeZone: zone, year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false });
-      const desiredUtc = Date.UTC(y, mo-1, da, hh, mm, 0, 0);
-      function wall(ms){ const parts = dtf.formatToParts(new Date(ms)); const map = {}; for (const p of parts) if (p.type !== 'literal') map[p.type] = p.value; return { y: +map.year, m: +map.month, d: +map.day, h: +map.hour, mi: +map.minute, s: +map.second }; }
-      let t = desiredUtc; let w = wall(t);
-      let actualUtc = Date.UTC(w.y, w.m-1, w.d, w.h, w.mi, w.s, 0);
-      let delta = desiredUtc - actualUtc; t += delta; w = wall(t); actualUtc = Date.UTC(w.y, w.m-1, w.d, w.h, w.mi, w.s, 0); delta = desiredUtc - actualUtc; t += delta; return new Date(t).toISOString().replace('.000Z','Z');
-    }
-
-    // -------- DataStore (Local or API) --------
-    const Store = (() => {
-      const sKey = 'ts_entries_v1';
-      const settingsKey = 'ts_settings_v1';
-      const uiKey = 'ts_ui';
-      const configKey = 'ts_config_v1';
-
-      const getSettings = () => JSON.parse(localStorage.getItem(settingsKey) || '{}');
-      const saveSettings = (obj) => localStorage.setItem(settingsKey, JSON.stringify(obj));
-
-      const getUi = () => JSON.parse(localStorage.getItem(uiKey) || '{}');
-      const saveUi = (obj) => localStorage.setItem(uiKey, JSON.stringify(obj));
-
-      const getSavedConfig = () => { try { return JSON.parse(localStorage.getItem(configKey) || 'null'); } catch(_) { return null; } };
-      const saveConfig = (obj) => localStorage.setItem(configKey, JSON.stringify(obj));
-
-      const list = (date) => { const all = JSON.parse(localStorage.getItem(sKey) || '{}'); return all[date] || []; };
-      const put = (date, entry) => { const all = JSON.parse(localStorage.getItem(sKey) || '{}'); if (!all[date]) all[date] = []; all[date].push(entry); localStorage.setItem(sKey, JSON.stringify(all)); };
-
-      async function apiCreate(base, useApi, entry) {
-        if (!useApi || !base) return { ok: true, id: entry.id };
-        try { const res = await fetch(`${base}/schedule`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(entry) }); if (!res.ok) throw new Error(await res.text()); return { ok: true, id: entry.id }; }
-        catch (err) { console.error('API create failed:', err); alert('API create failed: ' + err.message); return { ok: false }; }
-      }
-
-      return { list, put, getSettings, saveSettings, getUi, saveUi, getSavedConfig, saveConfig };
-    })();
-
-    // -------- Capacity & Config --------
-    let capacity = { default: 2 };          // legacy uniform capacity
-    let capacityGroups = null;              // v2 { key: { displayName, queue:{name,arn}, slots:{"HH:MM":cap} } }
-
-    async function loadCapacity() {
-      try { const res = await fetch('capacity.json', { cache: 'no-store' }); if (res.ok) { const json = await res.json(); if (json && json.version >= 2 && json.groups) { capacityGroups = json.groups; } else { capacity = json || capacity; } } }
-      catch (_) { /* ignore, fallback to defaults */ }
-    }
-
-    function applyConfig(obj){
-      if (!obj) return;
-      if (obj.version >= 2 && obj.groups) { capacityGroups = obj.groups; }
-      else { if (obj.capacity) capacity = obj.capacity; }
-      populateQueues();
-      flashTag('Config loaded');
-      try { Store.saveConfig(obj); } catch(_) {}
-    }
-
-    async function loadConfigFromUrl(url){
-      try { const res = await fetch(url, { cache: 'no-store' }); if (!res.ok) throw new Error(`HTTP ${res.status}`); const json = await res.json(); applyConfig(json); }
-      catch (e) { alert('Failed to load config: ' + e.message); }
-    }
-
-    function loadConfigFromFile(file){ const reader = new FileReader(); reader.onload = () => { try { const json = JSON.parse(reader.result); applyConfig(json); } catch(e){ alert('Invalid JSON: ' + e.message); } }; reader.readAsText(file); }
-
-    // -------- App State --------
-    const sysTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    const containerEl = document.getElementById('container');
-    const dateEl = document.getElementById('date');
-    const dateTop = document.getElementById('dateTop');
-    const slotsEl = document.getElementById('slots');
-    const dateTag = document.getElementById('dateTag');
-    const tzTag = document.getElementById('tzTag');
-    const localDateEl = document.getElementById('localDate');
-    const utcDateEl = document.getElementById('utcDate');
-
-    const entriesTbody = document.getElementById('entriesTbody');
-    const entryCount = document.getElementById('entryCount');
-
-    // Modal elements
-    const modal = document.getElementById('entryModal');
-    const modalSlotLabel = document.getElementById('modalSlotLabel');
-    const closeModalBtn = document.getElementById('closeModal');
-    const cancelBtn = document.getElementById('cancelBtn');
-    const createBtn = document.getElementById('createBtn');
-
-    const mLocalDate = document.getElementById('mLocalDate');
-    const mLocalTime = document.getElementById('mLocalTime');
-    const mTz = document.getElementById('mTz');
-    const mScheduledAt = document.getElementById('mScheduledAt');
-    const mNotifyAt = document.getElementById('mNotifyAt');
-    const mPhone = document.getElementById('mPhone');
-    const mAgent = document.getElementById('mAgent');
-    const mNotes = document.getElementById('mNotes');
-
-    // Settings
-    const apiBaseEl = document.getElementById('apiBase');
-    const notifyAheadEl = document.getElementById('notifyAhead');
-    const useApiEl = document.getElementById('useApi');
-    const saveSettingsBtn = document.getElementById('saveSettings');
-    const tzSelect = document.getElementById('tzSelect');
-    const queueSelect = document.getElementById('queueSelect');
-    const queueSelectTop = document.getElementById('queueSelectTop');
-    const toggleConfigBtn = document.getElementById('toggleConfigBtn');
-    const configUrlEl = document.getElementById('configUrl');
-    const loadConfigBtn = document.getElementById('loadConfigBtn');
-    const configFileInput = document.getElementById('configFile');
-
-    let selectedSlot = null; // { hour, minute }
-
-    function currentTz(){ const s = Store.getSettings(); return (s && s.tz) ? s.tz : sysTz; }
-    function currentQueueKey(){ const s = Store.getSettings(); return s && s.queueKey ? s.queueKey : (queueSelect && queueSelect.value); }
-
-    function populateTimezoneOptions(){
-      if (!tzSelect) return;
-      const list = (Intl.supportedValuesOf && Intl.supportedValuesOf('timeZone')) || ['UTC','America/New_York','America/Chicago','America/Denver','America/Los_Angeles','Europe/London','Europe/Paris','Asia/Tokyo','Australia/Sydney'];
-      tzSelect.innerHTML = list.map(z => `<option value="${z}">${z}</option>`).join('');
-      const s = Store.getSettings(); const def = (s && s.tz) || sysTz || 'UTC';
-      tzSelect.value = list.includes(def) ? def : 'UTC';
-    }
-
-    function populateQueues(){
-      const s = Store.getSettings();
-      let options = [];
-      if (capacityGroups) { options = Object.entries(capacityGroups).map(([key, g]) => ({ key, name: (g.displayName || (g.queue && g.queue.name) || key) })); }
-      else { options = [{ key: 'default', name: 'Default' }]; }
-
-      const html = options.map(o => `<option value="${o.key}">${o.name}</option>`).join('');
-      queueSelect.innerHTML = html;
-      queueSelectTop.innerHTML = html;
-
-      const def = (s && s.queueKey) || (options[0] && options[0].key);
-      if (def) { queueSelect.value = def; queueSelectTop.value = def; }
-    }
-
-    function loadSettings() {
-      const s = Store.getSettings();
-      if (s.apiBase) apiBaseEl.value = s.apiBase;
-      if (typeof s.notifyAhead === 'number') notifyAheadEl.value = s.notifyAhead;
-      if (typeof s.useApi === 'boolean') useApiEl.checked = s.useApi;
-      if (s.tz && tzSelect) tzSelect.value = s.tz;
-      if (s.queueKey && queueSelect) { queueSelect.value = s.queueKey; if (queueSelectTop) queueSelectTop.value = s.queueKey; }
-      if (configUrlEl && s.configUrl) configUrlEl.value = s.configUrl;
-      if (s.date) { dateEl.value = s.date; if (dateTop) dateTop.value = s.date; }
-    }
-
-    function saveSettings() {
-      Store.saveSettings({
-        apiBase: apiBaseEl.value.trim(),
-        notifyAhead: Number(notifyAheadEl.value) || 0,
-        useApi: !!useApiEl.checked,
-        tz: tzSelect ? tzSelect.value : undefined,
-        configUrl: configUrlEl ? configUrlEl.value.trim() : undefined,
-        queueKey: queueSelect ? queueSelect.value : undefined,
-        date: dateEl ? dateEl.value : undefined
-      });
-    }
-
-    // UI collapse state
-    function updateToggleTitle(){ const collapsed = containerEl.classList.contains('config-collapsed'); toggleConfigBtn.title = collapsed ? 'Show settings panel' : 'Hide settings panel'; toggleConfigBtn.setAttribute('aria-pressed', (!collapsed).toString()); }
-    function setCollapsed(collapsed){ containerEl.classList.toggle('config-collapsed', collapsed); Store.saveUi({ collapsed }); updateToggleTitle(); }
-    function restoreUi(){ const ui = Store.getUi(); if (ui && typeof ui.collapsed === 'boolean') { containerEl.classList.toggle('config-collapsed', ui.collapsed); } updateToggleTitle(); }
-
-    // Sync controls (date, queue) between left panel and header
-    function syncDates(fromTop){ if (fromTop && dateTop) dateEl.value = dateTop.value; else if (dateTop) dateTop.value = dateEl.value; saveSettings(); updateDateTags(); buildSlots(); renderEntries(); }
-    function syncQueues(fromTop){ if (fromTop && queueSelectTop) queueSelect.value = queueSelectTop.value; else if (queueSelectTop) queueSelectTop.value = queueSelect.value; saveSettings(); buildSlots(); renderEntries(); }
-
-    // Events
-    saveSettingsBtn.addEventListener('click', () => { saveSettings(); flashTag('Saved'); updateDateTags(); buildSlots(); renderEntries(); });
-    if (tzSelect) tzSelect.addEventListener('change', () => { saveSettings(); updateDateTags(); buildSlots(); renderEntries(); });
-    if (queueSelect) queueSelect.addEventListener('change', () => syncQueues(false));
-    if (queueSelectTop) queueSelectTop.addEventListener('change', () => syncQueues(true));
-    if (dateEl) dateEl.addEventListener('change', () => syncDates(false));
-    if (dateTop) dateTop.addEventListener('change', () => syncDates(true));
-    if (toggleConfigBtn) toggleConfigBtn.addEventListener('click', () => { const collapsed = containerEl.classList.contains('config-collapsed'); setCollapsed(!collapsed); });
-    if (loadConfigBtn) loadConfigBtn.addEventListener('click', () => { const url = (configUrlEl && configUrlEl.value.trim()); if (url) { saveSettings(); loadConfigFromUrl(url); } });
-    if (configFileInput) configFileInput.addEventListener('change', (e) => { const f = e.target.files && e.target.files[0]; if (f) loadConfigFromFile(f); });
-
-    // Modal buttons & behavior
-    if (closeModalBtn) closeModalBtn.addEventListener('click', (e) => { e.preventDefault(); closeModal(); });
-    if (cancelBtn) cancelBtn.addEventListener('click', (e) => { e.preventDefault(); closeModal(); });
-    if (createBtn) createBtn.addEventListener('click', async (e) => { e.preventDefault(); await createEntry(); });
-    if (modal) {
-      // Allow ESC to close
-      modal.addEventListener('cancel', (e) => { e.preventDefault(); closeModal(); });
-      // Click outside to close
-      modal.addEventListener('click', (e) => {
-        const rect = modal.getBoundingClientRect();
-        const inside = e.clientX >= rect.left && e.clientX <= rect.right && e.clientY >= rect.top && e.clientY <= rect.bottom;
-        if (!inside) closeModal();
-      });
-    }
-
-    function flashTag(text) { const span = document.createElement('span'); span.className = 'tag'; span.textContent = text; span.style.marginLeft = '8px'; saveSettingsBtn.insertAdjacentElement('afterend', span); setTimeout(() => span.remove(), 1400); }
-
-    function initDate() { const today = new Date(); dateEl.value = fmtLocalDate(today); if (dateTop) dateTop.value = dateEl.value; updateDateTags(); }
-
-    function updateDateTags() {
-      const d = dateEl.value; const [y, m, da] = d.split('-').map(Number); const dt = new Date(y, m-1, da);
-      dateTag.textContent = dt.toDateString(); tzTag.textContent = currentTz();
-      const midnightUtcIso = tzWallToUtc(y, m, da, 0, 0, currentTz());
-      const localFmt = new Intl.DateTimeFormat(undefined, { timeZone: currentTz(), weekday:'short', year:'numeric', month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' });
-      localDateEl.textContent = localFmt.format(new Date(midnightUtcIso));
-      utcDateEl.textContent = new Date(midnightUtcIso).toUTCString();
-    }
-
-    function minutesOfDay(h, m) { return h * 60 + m; }
-
-    function buildSlots() {
-      const dateStr = dateEl.value; // YYYY-MM-DD
-      const entries = Store.list(dateStr);
-      slotsEl.innerHTML = '';
-
-      let times = [];
-      let capacityFor = (hhmm) => (capacity && capacity.default) ? Number(capacity.default) : 2;
-      let qMeta = { name: 'Default', arn: undefined, key: 'default' };
-
-      if (capacityGroups && queueSelect && queueSelect.value && capacityGroups[queueSelect.value]) {
-        const group = capacityGroups[queueSelect.value];
-        qMeta = { name: group.displayName || (group.queue && group.queue.name) || queueSelect.value, arn: group.queue && group.queue.arn, key: queueSelect.value };
-        times = Object.keys(group.slots || {}).sort(sortTimesAsc);
-        capacityFor = (hhmm) => Number(group.slots[hhmm] || 0);
-      } else {
-        for (let h = 0; h < 24; h++) for (let m = 0; m < 60; m += 10) times.push(`${pad2(h)}:${pad2(m)}`);
-      }
-
-      if (!times.length) { const p = document.createElement('p'); p.className = 'muted'; p.textContent = 'No times configured for this queue.'; slotsEl.appendChild(p); return; }
-
-      const booked = new Map(); // HH:MM -> count (current queue only)
-      for (const e of entries) {
-        const sameQueue = (e.queueKey || 'default') === (qMeta.key || 'default');
-        if (!sameQueue) continue;
-        const hhmm = e.timeLocal.slice(0,5);
-        booked.set(hhmm, (booked.get(hhmm) || 0) + 1);
-      }
-
-      for (const hhmm of times) {
-        const [h, m] = hhmm.split(':').map(Number);
-        const cap = capacityFor(hhmm);
-        if (!cap) continue; // not available for this queue/time
-        const b = booked.get(hhmm) || 0; const full = b >= cap;
-
-        const div = document.createElement('div');
-        div.className = 'slot' + (full ? ' full' : '');
-        div.setAttribute('data-h', h); div.setAttribute('data-m', m);
-        div.innerHTML = `
-          <div><strong>${hhmm}</strong></div>
-          <div class="cap">${b} / ${cap} booked — <span class="muted">${qMeta.name}</span></div>
-          <div><span class="badge">${full ? 'Full' : 'Open'}</span></div>`;
-
-        if (!full) { div.addEventListener('click', () => openModal(h, m)); div.title = 'Click to create entry'; }
-        else { div.title = 'Slot full'; }
-
-        slotsEl.appendChild(div);
-      }
-    }
-
-    function renderEntries() {
-      const dateStr = dateEl.value; const entries = Store.list(dateStr).slice().sort((a,b) => minutesOfDay(...a.hm) - minutesOfDay(...b.hm));
-      entriesTbody.innerHTML = '';
-      for (const e of entries) {
-        const tr = document.createElement('tr');
-        tr.innerHTML = `
-          <td>${e.timeLocal}</td>
-          <td><code>${e.scheduledAt}</code></td>
-          <td><code>${e.notifyAt}</code></td>
-          <td>${e.phone || ''}</td>
-          <td>${e.queueName || e.queueId || ''}</td>
-          <td>${e.notes ? e.notes.replace(/</g,'&lt;') : ''}</td>
-          <td><code>${e.id}</code></td>`;
-        entriesTbody.appendChild(tr);
-      }
-      entryCount.textContent = String(entries.length);
-    }
-
-    function openModal(h, m) {
-      selectedSlot = { hour: h, minute: m };
-      const [y, mo, da] = dateEl.value.split('-').map(Number);
-      const local = new Date(y, mo-1, da, h, m, 0, 0);
-
-      const s = Store.getSettings(); const ahead = typeof s.notifyAhead === 'number' ? s.notifyAhead : (Number(notifyAheadEl.value) || 0);
-
-      modalSlotLabel.textContent = `${pad2(h)}:${pad2(m)}`;
-      mLocalDate.value = fmtLocalDate(local); mLocalTime.value = fmtLocalTime(local); mTz.value = currentTz();
-
-      const scheduledAt = tzWallToUtc(y, mo, da, h, m, currentTz());
-      const notifyAt = new Date(Date.parse(scheduledAt) - ahead * 60_000).toISOString().replace('.000Z','Z');
-
-      mScheduledAt.value = scheduledAt; mNotifyAt.value = notifyAt;
-      mPhone.value = ''; mAgent.value = ''; mNotes.value = '';
-
-      modal.showModal();
-    }
-
-    function closeModal() { modal.close(); }
-
-    async function createEntry() {
-      if (!selectedSlot) return;
-      const phone = mPhone.value.trim(); const notes = mNotes.value.trim(); const agent = mAgent.value.trim() || undefined;
-
-      // capture current queue metadata
-      let queueKey = 'default', queueName = 'Default', queueArn = undefined;
-      if (capacityGroups && queueSelect && capacityGroups[queueSelect.value]) {
-        const g = capacityGroups[queueSelect.value];
-        queueKey = queueSelect.value; queueName = g.displayName || (g.queue && g.queue.name) || queueKey; queueArn = g.queue && g.queue.arn;
-      }
-
-      const entry = {
-        id: uuidv4(),
-        date: dateEl.value,
-        timeLocal: `${pad2(selectedSlot.hour)}:${pad2(selectedSlot.minute)}`,
-        hm: [selectedSlot.hour, selectedSlot.minute],
-        scheduledAt: mScheduledAt.value,
-        notifyAt: mNotifyAt.value,
-        phone,
-        notes,
-        agentId: agent,
-        queueKey,
-        queueName,
-        queueArn,
-        capacityKey: 'default',
-        createdAt: new Date().toISOString()
-      };
-
-      const settings = Store.getSettings();
-      const resp = await Store.apiCreate(settings.apiBase, settings.useApi, entry);
-      if (resp.ok) { Store.put(dateEl.value, entry); renderEntries(); buildSlots(); closeModal(); }
-    }
-
-    // -------- Start --------
-    (async function start() {
-      restoreUi();
-      populateTimezoneOptions();
-      await loadCapacity();
-      try { const saved = Store.getSavedConfig(); if (saved) applyConfig(saved); } catch(_) {}
-      const s = Store.getSettings(); if (s && s.configUrl) { loadConfigFromUrl(s.configUrl); }
-      populateQueues();
-      loadSettings();
-      initDate();
-      buildSlots();
-      renderEntries();
-    })();
-  </script>
+  <script src="app.js"></script>
 </body>
 </html>

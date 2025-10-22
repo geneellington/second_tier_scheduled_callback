@@ -364,7 +364,7 @@ if (resource === "/entries" && httpMethod === "POST") {
         TableName: TABLE,
         Key: marshall({ PK: oldPK, SK: oldSK })
       }));
-      if (!got.Item) return res(404, { message: "Entry not found" });
+      if (!got.Item) return res(event, 404, { message: "Entry not found" });
 
       const oldItem = unmarshall(got.Item);
 
@@ -422,23 +422,36 @@ if (resource === "/entries" && httpMethod === "POST") {
     }
 
 
-    // DELETE /entries/{id}?date=...&time=...
-    if (resource === "/entries/{id}" && httpMethod === "DELETE") {
-      const id = idParam;
-      const { date, time } = qs;
-      if (!id || !date || !time) return res(event, 400, { message: "Missing id, date, or time" });
+  // DELETE /entries/{id}?date=YYYY-MM-DD&time=HH:MM  (UTC time)
+  if (resource === "/entries/{id}" && httpMethod === "DELETE") {
+    const id = idParam;
+    const { date, time } = qs || {};
 
-      await ddb.send(new DeleteItemCommand({
-        TableName: TABLE,
-        Key: marshall({ PK: `DATE#${date}`, SK: `TIME#${time}#ID#${id}` })
-      }));
-
-      return res(event, 200, { ok: true });
+    if (!id || !date || !time) {
+      return res(event, 400, { message: "Missing id, date, or time" });
     }
 
-    return res(404, { message: "Not found" });
+    try {
+      await ddb.send(new DeleteItemCommand({
+        TableName: TABLE,
+        Key: marshall({ PK: `DATE#${date}`, SK: `TIME#${time}#ID#${id}` }),
+        // Make the delete conditional so we don't return 200 when nothing existed
+        ConditionExpression: "attribute_exists(PK) AND attribute_exists(SK)"
+      }));
+      return res(event, 200, { ok: true });
+    } catch (e) {
+      if (String(e.name) === "ConditionalCheckFailedException") {
+        return res(event, 404, { message: "Entry not found for given id/date/time" });
+      }
+      console.error("DELETE failed", e);
+      return res(event, 500, { message: "Internal server error", error: String(e?.message || e) });
+    }
+  }
+
+
+    return res(event, 404, { message: "Not found" });
   } catch (err) {
     console.error(err);
-    return res(500, { message: "Internal server error", error: String(err?.message || err) });
+    return res(event,500, { message: "Internal server error", error: String(err?.message || err) });
   }
 };
