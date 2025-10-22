@@ -1,2 +1,12 @@
-backend/geneTimeSlotManager/node_modules/
-backend/geneTimeSlotManager/deployment.zip
+# dependencies
+**/node_modules/
+
+# build / packaging artifacts
+backend/geneTimeSlotManager/unpacked/
+backend/geneTimeSlotManager/unpacked.zip
+
+dist/
+build/
+*.zip
+*.tgz
+*.log
