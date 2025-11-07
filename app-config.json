@@ -5,7 +5,7 @@
     "notifyAhead": 15,
     "tz": "America/Phoenix",
     "capTz": "America/New_York",
-    "queueKey": "default"
+    "queueKey": "tier2_checking"
   },
   "lock": {
     "apiBase": true,

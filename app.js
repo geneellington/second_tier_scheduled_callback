@@ -221,56 +221,42 @@ async function loadCapacity() {
 function applyConfig(obj){
   if (!obj) return;
 
-  // Capacity model
-  if (obj.version >= 2 && obj.groups) {
-    capacityGroups = obj.groups;
-  } else if (obj.capacity) {
-    capacity = obj.capacity;
-  }
+  // Existing capacity handling
+  if (obj.version >= 2 && obj.groups) capacityGroups = obj.groups;
+  else if (obj.capacity) capacity = obj.capacity;
 
-  // NEW: API base + defaults + locks
-  const cur  = Store.getSettings() || {};
+  // NEW: apply central apiBase + defaults into saved settings
+  const cur = Store.getSettings ? Store.getSettings() : {};
   const next = { ...cur };
-  const d    = obj.defaults || {};
-  const lock = obj.lock || {};
 
-  // Helper to apply a default and optionally lock the UI control
-  function applyField(key, val, lockFlag, el, onSet){
-    if (lockFlag) {
-      if (val != null) next[key] = val;           // enforce central value
-      if (el) { el.disabled = true; el.title = 'Managed by configuration'; if (val != null && 'value' in el) el.value = val; }
-      if (onSet) onSet(val);
-      return;
-    }
-    // Not locked → seed only if user hasn’t set it yet
-    if (cur[key] == null && val != null) {
-      next[key] = val;
-      if (el && 'value' in el) el.value = val;
-      if (onSet) onSet(val);
-    }
+  if (obj.apiBase) next.apiBase = obj.apiBase;
+
+  if (obj.defaults) {
+    if (obj.defaults.notifyAhead != null) next.notifyAhead = obj.defaults.notifyAhead;
+    if (obj.defaults.tz) next.tz = obj.defaults.tz;
+    if (obj.defaults.capTz) next.capTz = obj.defaults.capTz;
+    if (obj.defaults.queueKey) next.queueKey = obj.defaults.queueKey;
   }
 
-  // API base
-  if (obj.apiBase) {
-    next.apiBase = obj.apiBase;
-    next.useApi  = true;
-    if (typeof apiBaseEl !== 'undefined' && apiBaseEl) {
-      apiBaseEl.value = obj.apiBase;
-      apiBaseEl.disabled = lock.apiBase === true;
-      apiBaseEl.title = lock.apiBase ? 'Managed by configuration' : '';
-    }
-    if (typeof useApiEl !== 'undefined' && useApiEl) useApiEl.checked = true;
+  // Persist merged settings
+  try { Store.saveSettings(next); } catch(_) {}
+
+  // Reflect into the Settings UI
+  if (apiBaseEl && obj.apiBase) apiBaseEl.value = obj.apiBase;
+  if (notifyAheadEl && next.notifyAhead != null) notifyAheadEl.value = String(next.notifyAhead);
+  if (tzSelect && next.tz) tzSelect.value = next.tz;
+  if (capTzSelect && next.capTz) capTzSelect.value = next.capTz;
+  if (queueSelect && next.queueKey) { queueSelect.value = next.queueKey; if (queueSelectTop) queueSelectTop.value = next.queueKey; }
+
+  // Respect locks (disable fields if locked)
+  if (obj.lock) {
+    if (apiBaseEl) apiBaseEl.disabled = !!obj.lock.apiBase;
+    if (tzSelect) tzSelect.disabled = !!obj.lock.tz;
+    if (capTzSelect) capTzSelect.disabled = !!obj.lock.capTz;
+    if (queueSelect) { queueSelect.disabled = !!obj.lock.queueKey; }
+    if (queueSelectTop) queueSelectTop.disabled = !!obj.lock.queueKey;
+    if (notifyAheadEl) notifyAheadEl.disabled = !!obj.lock.notifyAhead;
   }
-
-  // Defaults (tz, capTz, queueKey, notifyAhead)
-  applyField('tz', d.tz, !!lock.tz, tzSelect);
-  applyField('capTz', d.capTz, !!lock.capTz, capTzSelect);
-  applyField('queueKey', d.queueKey, !!lock.queueKey, queueSelect, (v) => {
-    if (queueSelectTop && v != null) queueSelectTop.value = v;
-  });
-  applyField('notifyAhead', d.notifyAhead, !!lock.notifyAhead, notifyAheadEl);
-
-  Store.saveSettings(next);
 
   populateQueues();
   flashTag('Config loaded');
@@ -278,9 +264,16 @@ function applyConfig(obj){
 }
 
 
-async function loadConfigFromUrl(url){
-  try { const res = await fetch(url, { cache: 'no-store' }); if (!res.ok) throw new Error(`HTTP ${res.status}`); const json = await res.json(); applyConfig(json); }
-  catch (e) { alert('Failed to load config: ' + e.message); }
+
+async function loadConfigFromUrl(url) {
+  try {
+    const res = await fetch(url, { cache: 'no-store' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const json = await res.json();
+    applyConfig(json);
+  } catch (e) {
+    console.warn('Failed to load config: ' + e.message);
+  }
 }
 
 function loadConfigFromFile(file){ const reader = new FileReader(); reader.onload = () => { try { const json = JSON.parse(reader.result); applyConfig(json); } catch(e){ alert('Invalid JSON: ' + e.message); } }; reader.readAsText(file); }
@@ -361,16 +354,43 @@ function populateTimezoneOptions(){
 function populateQueues(){
   const s = Store.getSettings();
   let options = [];
-  if (capacityGroups) { options = Object.entries(capacityGroups).map(([key, g]) => ({ key, name: (g.displayName || (g.queue && g.queue.name) || key) })); }
-  else { options = [{ key: 'default', name: 'Default' }]; }
+
+  if (capacityGroups) {
+    options = Object.entries(capacityGroups).map(([key, g]) => ({
+      key,
+      name: (g.displayName || (g.queue && g.queue.name) || key)
+    }));
+  } else {
+    options = [{ key: 'default', name: 'Default' }];
+  }
 
   const html = options.map(o => `<option value="${o.key}">${o.name}</option>`).join('');
   queueSelect.innerHTML = html;
   queueSelectTop.innerHTML = html;
 
-  const def = (s && s.queueKey) || (options[0] && options[0].key);
-  if (def) { queueSelect.value = def; queueSelectTop.value = def; }
+  // NEW: validate saved/default queueKey
+  const cfg = (typeof Store.getSavedConfig === 'function') ? Store.getSavedConfig() : null;
+  const cfgDefault = cfg?.defaults?.queueKey;
+
+  let def = s?.queueKey || cfgDefault || (options[0] && options[0].key);
+
+  // If saved value doesn't exist in current options, fall back
+  if (!options.some(o => o.key === def)) {
+    def =
+      (cfgDefault && options.some(o => o.key === cfgDefault)) ?
+      cfgDefault :
+      (options[0] && options[0].key);
+
+    // persist the corrected value so it sticks
+    try { Store.saveSettings({ ...s, queueKey: def }); } catch (_) {}
+  }
+
+  if (def) {
+    queueSelect.value = def;
+    queueSelectTop.value = def;
+  }
 }
+
 
 function loadSettings() {
   const s = Store.getSettings();
@@ -1067,7 +1087,21 @@ document.addEventListener('DOMContentLoaded', () => {
         if (saved) applyConfig(saved);
       } catch (_) {}
       const s = Store.getSettings();
-      if (s && s.configUrl) loadConfigFromUrl(s.configUrl);
+
+      // Try saved Config URL first; otherwise try local ./config.json silently.
+      if (s && s.configUrl) {
+        loadConfigFromUrl(s.configUrl);
+      } else {
+        try {
+          const res = await fetch('config.json', { cache: 'no-store' });
+          if (res.ok) {
+            const json = await res.json();
+            applyConfig(json);
+          }
+        } catch (_) {
+          // ignore missing local config.json
+        }
+      }
       populateQueues();
       loadSettings();
       ensureDate();
