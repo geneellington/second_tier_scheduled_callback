@@ -178,41 +178,16 @@ function getRoleFromGroups(groups) {
  *  3) Default: Admin
  */
 function initAuthRole() {
-  let role = 'Admin'; // default if nothing else is set
-
-  // 1) URL override: ?role=Admin or ?role=Agent
-  try {
-    const searchParams = new URLSearchParams(window.location.search || '');
-    const urlRole = searchParams.get('role');
-    if (urlRole === 'Admin' || urlRole === 'Agent') {
-      role = urlRole;
-      console.log('initAuthRole: using role from URL param:', role);
-      window.currentUserRole = role;
-      return role;
-    }
-  } catch (_) {
-    // ignore; fall through
-  }
-
-  // 2) Look for id_token in URL hash from Cognito Hosted UI
-  let idToken = null;
-  const hash = window.location.hash || '';
-  if (hash.startsWith('#')) {
-    const params = new URLSearchParams(hash.substring(1));
-    idToken = params.get('id_token');
-    if (idToken) {
-      // Clean up the hash so it doesn't clutter the URL
-      window.location.hash = '';
-    }
-  }
-
   const params = new URLSearchParams(window.location.search);
   const roleOverride = params.get('role');
+
+  // Default role if nothing else is set
   let role = (window.AppConfig && window.AppConfig.defaultRole) || 'Admin';
 
-  if (roleOverride) {
+  if (roleOverride === 'Admin' || roleOverride === 'Agent') {
     console.log('initAuthRole: using role from URL param:', roleOverride);
     role = roleOverride;
+    // When role is forced via ?role=, ignore any existing token
     window.currentUserIdToken = null;
     window.currentUser = null;
     window.currentUserGroups = null;
@@ -229,9 +204,13 @@ function initAuthRole() {
       window.currentUserGroups = groups;
       window.currentUser = user;
 
-      console.log('initAuthRole: using role from id_token groups:', role, groups, user);
+      console.log(
+        'initAuthRole: using role from id_token groups:',
+        role,
+        groups,
+        user
+      );
     } else {
-      // 🔹 No ?role= and no id_token → here’s where we decide what to do
       console.log('initAuthRole: no URL role and no id_token');
 
       const host = window.location.hostname;
@@ -240,12 +219,13 @@ function initAuthRole() {
         host === 'localhost';
 
       const cognitoCfg = getCognitoConfig();
+
       if (!isLocal && cognitoCfg) {
         // In production (CloudFront) with Cognito configured → force login
         const loginUrl = buildCognitoLoginUrl();
         console.log('initAuthRole: redirecting to Cognito login:', loginUrl);
         window.location.href = loginUrl;
-        // We won’t really use the return value after redirect,
+        // We won't really use the return value after redirect,
         // but return something explicit anyway.
         return 'Unknown';
       }
@@ -260,6 +240,7 @@ function initAuthRole() {
   applyAuthButtonsVisibility();
   return role;
 }
+
 
 function applyRoleToUi(role) {
   const gearBtn = document.getElementById('toggleConfigBtn');
