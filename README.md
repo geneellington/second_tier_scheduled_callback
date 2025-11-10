@@ -106,4 +106,136 @@ They **don’t** control “how many minutes before the appointment” your remi
 
 These scheduler knobs only provide **tolerance around the exact due moment** to handle real-world timing jitter.
 
+# Scheduled Callback System – Admin Notes
+
+_Last updated: 2025-11-07_
+
+## 1. What this system does
+
+This app lets agents/admins schedule callbacks for customers in defined time slots. It:
+
+- Shows available callback capacity per day/time slot.
+- Creates/updates/deletes entries in DynamoDB via an API.
+- Triggers Amazon Connect contact flows:
+  - Confirmation when an entry is created.
+  - Reminder before the scheduled time.
+  - Notify/Callback at the scheduled time.
+
+The system is split into:
+
+- A **static UI** (HTML/JS).
+- **Backend Lambdas** behind API Gateway.
+- A **DynamoDB table** for timeslots.
+- An **S3 capacity config** that defines how many slots per day/time.
+
+---
+
+## 2. Where is everything?
+
+### 2.1 UI (frontend)
+
+Static files (examples; adjust paths to your setup):
+
+- `index.html` – main HTML shell.
+- `app.js` – main client-side logic:
+  - Renders the schedule.
+  - Calls the API (`/entries`).
+  - Handles create/update/delete.
+  - Timezone preview panel + debug panel.
+- `app-config.json` – UI configuration (API base, default timezone, etc.).
+- `config.json` (optional) – per-tenant or override config (if present).
+- Any CSS embedded in `index.html` `<style>` block.
+
+Where they live:
+
+- Usually in an S3 bucket, e.g.:
+  - **Bucket**: `gene-scheduled-callback`
+  - **Prefix**: `scheduled-callback-ui/`
+  - Common files in that prefix: `index.html`, `app.js`, `app-config.json`
+
+> NOTE: The UI uses `app-config.json` for `apiBase` and Cognito config (once wired).
+
+### 2.2 Backend
+
+#### 2.2.1 API Lambda (Timeslot Manager)
+
+- **Function name**: `geneTimeSlotManager`
+- Responsibilities:
+  - Handles `/entries`:
+    - `GET /entries?date=YYYY-MM-DD` – list entries for a date.
+    - `POST /entries` – create entry + trigger **Confirmation** contact flow.
+    - `PATCH /entries/{id}` – update entry.
+    - `DELETE /entries/{id}` – delete entry.
+  - Manages all DynamoDB reads/writes for UI-driven changes.
+  - Computes and writes:
+    - `reminderAt`, `notifyAt`, `scheduledAt`
+    - `notifyDate`, `scheduledDate`
+    - Timezone-aware attributes:
+      - `customerTz`
+      - `customerTzLabel`
+      - `scheduledLocalDate`
+      - `scheduledLocalTime`
+      - `scheduledLocalDateTime`
+
+#### 2.2.2 Scheduler Lambda (Reminder/Notify worker)
+
+- **Function name**: `geneScheduleCallback`
+- Trigger: EventBridge rule on a schedule (e.g., every minute).
+- Responsibilities:
+  - Scans the DynamoDB table for entries that:
+    - Need a **Reminder** (before scheduled time).
+    - Need a **Notify/Callback** (at the scheduled time).
+  - Calls Amazon Connect:
+    - **Reminder** contact flow ARN.
+    - **Notify/Callback** contact flow ARN.
+  - Marks items as processed (e.g., `remindedAt`, `callbackCreatedAt` or equivalent).
+
+---
+
+## 3. Data storage
+
+### 3.1 DynamoDB
+
+- **Table name**: `geneTimeSlotTable`
+
+Typical item shape (example):
+
+```json
+{
+  "PK": "DATE#2025-11-07",
+  "SK": "TIME#14:00#ID#<uuid>",
+
+  "id": "<uuid>",
+  "date": "2025-11-07",
+  "time": "14:00",
+
+  "customer": "Jane Customer",
+  "customerName": "Jane Customer",
+  "phone": "+1...",
+  "phoneDisplay": "(425) 555-1234",
+
+  "agentId": "ABC123",
+  "groupKey": "tier2_checking",
+  "queueName": "Tier 2 - Checking",
+  "queueArn": "arn:aws:connect:...:queue/...",
+  "capacityKey": "default",
+
+  "durationMin": 10,
+  "notes": "Callback notes",
+
+  "customerTz": "America/Phoenix",
+  "customerTzLabel": "America/Phoenix",
+  "scheduledAt": "2025-11-07T14:00:00Z",
+  "scheduledDate": "2025-11-07",
+
+  "reminderAt": "2025-11-07T13:58:00.000Z",
+  "notifyAt": "2025-11-07T14:00:00.000Z",
+  "notifyDate": "2025-11-07",
+
+  "createdAt": "2025-11-07T04:17:51.933Z",
+  "updatedAt": "2025-11-07T04:29:26.318Z",
+
+  "remindedAt": "2025-11-07T13:58:10.000Z",     // set by scheduler Lambda
+  "callbackCreatedAt": "2025-11-07T14:00:05.000Z" // optional, set by scheduler Lambda
+}
 

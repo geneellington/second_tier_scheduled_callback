@@ -1,0 +1,294 @@
+// geneScheduleCallback/index.mjs
+import {
+  DynamoDBClient,
+  ScanCommand,
+  UpdateItemCommand,
+} from "@aws-sdk/client-dynamodb";
+import { marshall, unmarshall } from "@aws-sdk/util-dynamodb";
+import {
+  ConnectClient,
+  StartTaskContactCommand,
+} from "@aws-sdk/client-connect";
+
+const ddb = new DynamoDBClient({});
+const connect = new ConnectClient({});
+
+// Env vars you should have set on this Lambda:
+// - TABLE_NAME
+// - CONNECT_INSTANCE_ID
+// - CONTACT_FLOW_ARN_REMINDER
+// - CONTACT_FLOW_ARN_NOTIFICATION
+// Optional:
+// - WINDOW_BEFORE_MS
+// - WINDOW_AFTER_MS
+// - MIN_AGE_MS
+
+const TABLE = process.env.TABLE_NAME;
+const INSTANCE_ID = process.env.CONNECT_INSTANCE_ID;
+const FLOW_REMINDER = process.env.CONTACT_FLOW_ARN_REMINDER;
+const FLOW_NOTIFY = process.env.CONTACT_FLOW_ARN_NOTIFICATION;
+
+// Time window knobs
+const WINDOW_BEFORE_MS = Number(process.env.WINDOW_BEFORE_MS ?? 2000);   // up to 2s early
+const WINDOW_AFTER_MS  = Number(process.env.WINDOW_AFTER_MS  ?? 60000);  // up to 60s late
+const MIN_AGE_MS       = Number(process.env.MIN_AGE_MS       ?? 0);      // e.g. 30000 to avoid brand-new items
+
+function isDue(iso, nowMs) {
+  if (!iso) return false;
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return false;
+  return t <= nowMs + WINDOW_BEFORE_MS && t >= nowMs - WINDOW_AFTER_MS;
+}
+
+function isOldEnough(createdAt, nowMs) {
+  if (!createdAt || !MIN_AGE_MS) return true;
+  const c = Date.parse(createdAt);
+  if (Number.isNaN(c)) return true;
+  return nowMs - c >= MIN_AGE_MS;
+}
+
+function buildLocalFields(isoUtc, tz, tzLabel) {
+  if (!isoUtc || !tz) {
+    const lbl = tzLabel || tz || "";
+    return { localDate: "", localTime: "", localDateTime: "", tzLabel: lbl };
+  }
+
+  const d = new Date(isoUtc);
+
+  const dateStr = new Intl.DateTimeFormat("en-US", {
+    timeZone: tz,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(d);
+
+  const timeStr = new Intl.DateTimeFormat("en-US", {
+    timeZone: tz,
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  }).format(d);
+
+  const label = tzLabel || tz;
+  return {
+    localDate: dateStr,
+    localTime: timeStr,
+    localDateTime: `${dateStr} ${timeStr} ${label}`,
+    tzLabel: label,
+  };
+}
+
+export const handler = async () => {
+  const now = new Date().toISOString();
+  const nowMs = Date.parse(now);
+
+  console.log("scheduler tick", {
+    now,
+    table: TABLE,
+    instance: INSTANCE_ID,
+    hasReminderFlow: !!FLOW_REMINDER,
+    hasNotifyFlow: !!FLOW_NOTIFY,
+  });
+
+  if (!TABLE) {
+    console.error("TABLE_NAME env var is not set");
+    return { ok: false, error: "TABLE_NAME env var missing" };
+  }
+
+  // Basic scan for items that are due (<= now) and not yet fired
+  const scanParams = {
+    TableName: TABLE,
+    ProjectionExpression:
+      "PK,SK,id,#date,#time,customer,agentId,phone," +
+      "reminderAt,notifyAt,remindedAt,notifiedAt,createdAt," +
+      "customerTz,customerTzLabel,scheduledAt",
+    ExpressionAttributeNames: {
+      "#date": "date",
+      "#time": "time",
+    },
+    FilterExpression:
+      "(attribute_exists(reminderAt) AND reminderAt <= :now AND attribute_not_exists(remindedAt)) " +
+      "OR (attribute_exists(notifyAt) AND notifyAt <= :now AND attribute_not_exists(notifiedAt))",
+    ExpressionAttributeValues: marshall({
+      ":now": now,
+    }),
+  };
+
+  const resp = await ddb.send(new ScanCommand(scanParams));
+  const items = (resp.Items || []).map(unmarshall);
+
+  console.log("scan result", {
+    count: items.length,
+  });
+
+  const reminderDue = items.filter(
+    (i) =>
+      i.reminderAt &&
+      !i.remindedAt &&
+      isOldEnough(i.createdAt, nowMs) &&
+      isDue(i.reminderAt, nowMs),
+  );
+
+  const notifyDue = items.filter(
+    (i) =>
+      i.notifyAt &&
+      !i.notifiedAt &&
+      isOldEnough(i.createdAt, nowMs) &&
+      isDue(i.notifyAt, nowMs),
+  );
+
+  console.log("filtered due items", {
+    reminderDue: reminderDue.map((x) => x.id),
+    notifyDue: notifyDue.map((x) => x.id),
+  });
+
+  // ---- REMINDERS ----
+  for (const i of reminderDue) {
+    try {
+      if (!FLOW_REMINDER) {
+        console.warn("No FLOW_REMINDER set; skipping reminder", { id: i.id });
+        continue;
+      }
+
+      const tz = i.customerTz || i.tz || "";
+      const tzLabel =
+        i.customerTzLabel ||
+        (tz === "America/Phoenix" ? "Arizona Time" : tz);
+
+      const scheduledAtUtc =
+        i.scheduledAt ||
+        i.reminderAt ||
+        (i.date && i.time ? `${i.date}T${i.time}:00.000Z` : "");
+
+      const local = buildLocalFields(scheduledAtUtc, tz, tzLabel);
+
+      const attrs = {
+        entryId: i.id ?? "",
+        date: i.date ?? "",
+        time: i.time ?? "",
+        customer: i.customer ?? "",
+        phone: i.phone ?? "",
+        agentId: i.agentId ?? "",
+        capacityKey: i.capacityKey ?? "default",
+
+        kind: "reminder",
+
+        customerTz: tz,
+        customerTzLabel: local.tzLabel,
+
+        scheduledAtUtc: scheduledAtUtc || "",
+        scheduledLocalDate: local.localDate,
+        scheduledLocalTime: local.localTime,
+        scheduledLocalDateTime: local.localDateTime,
+      };
+
+      const out = await connect.send(
+        new StartTaskContactCommand({
+          InstanceId: INSTANCE_ID,
+          ContactFlowId: FLOW_REMINDER,
+          Name: `Reminder ${i.date} ${i.time}`,
+          Description: "Reminder before scheduled callback",
+          Attributes: attrs,
+        }),
+      );
+
+      console.log("Reminder OK", {
+        id: i.id,
+        contactId: out.ContactId,
+      });
+
+      await ddb.send(
+        new UpdateItemCommand({
+          TableName: TABLE,
+          Key: marshall({ PK: i.PK, SK: i.SK }),
+          UpdateExpression: "SET remindedAt = :ts",
+          ConditionExpression: "attribute_not_exists(remindedAt)",
+          ExpressionAttributeValues: marshall({ ":ts": now }),
+        }),
+      );
+    } catch (e) {
+      console.error("Reminder FAILED", {
+        id: i.id,
+        err: String(e),
+      });
+    }
+  }
+
+  // ---- NOTIFICATIONS ----
+  for (const i of notifyDue) {
+    try {
+      if (!FLOW_NOTIFY) {
+        console.warn("No FLOW_NOTIFY set; skipping notify", { id: i.id });
+        continue;
+      }
+
+      const tz = i.customerTz || i.tz || "";
+      const tzLabel =
+        i.customerTzLabel ||
+        (tz === "America/Phoenix" ? "Arizona Time" : tz);
+
+      const scheduledAtUtc =
+        i.scheduledAt ||
+        i.notifyAt ||
+        (i.date && i.time ? `${i.date}T${i.time}:00.000Z` : "");
+
+      const local = buildLocalFields(scheduledAtUtc, tz, tzLabel);
+
+      const attrs = {
+        entryId: i.id ?? "",
+        date: i.date ?? "",
+        time: i.time ?? "",
+        customer: i.customer ?? "",
+        phone: i.phone ?? "",
+        agentId: i.agentId ?? "",
+        capacityKey: i.capacityKey ?? "default",
+
+        kind: "notify",
+
+        customerTz: tz,
+        customerTzLabel: local.tzLabel,
+
+        scheduledAtUtc: scheduledAtUtc || "",
+        scheduledLocalDate: local.localDate,
+        scheduledLocalTime: local.localTime,
+        scheduledLocalDateTime: local.localDateTime,
+      };
+
+      const out = await connect.send(
+        new StartTaskContactCommand({
+          InstanceId: INSTANCE_ID,
+          ContactFlowId: FLOW_NOTIFY,
+          Name: `Notify ${i.date} ${i.time}`,
+          Description: "Notify right before scheduled callback",
+          Attributes: attrs,
+        }),
+      );
+
+      console.log("Notify OK", {
+        id: i.id,
+        contactId: out.ContactId,
+      });
+
+      await ddb.send(
+        new UpdateItemCommand({
+          TableName: TABLE,
+          Key: marshall({ PK: i.PK, SK: i.SK }),
+          UpdateExpression: "SET notifiedAt = :ts",
+          ConditionExpression: "attribute_not_exists(notifiedAt)",
+          ExpressionAttributeValues: marshall({ ":ts": now }),
+        }),
+      );
+    } catch (e) {
+      console.error("Notify FAILED", {
+        id: i.id,
+        err: String(e),
+      });
+    }
+  }
+
+  return {
+    ok: true,
+    reminderCount: reminderDue.length,
+    notifyCount: notifyDue.length,
+  };
+};

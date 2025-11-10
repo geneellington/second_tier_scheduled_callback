@@ -2,6 +2,10 @@
 const pad2 = (n) => String(n).padStart(2, '0');
 const fmtLocalDate = (d) => `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`;
 const fmtLocalTime = (d) => `${pad2(d.getHours())}:${pad2(Math.floor(d.getMinutes()/10)*10)}`;
+const DebugHistory = {
+  req: [],
+  res: []
+};
 
 function uuidv4() { return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => { const r = crypto.getRandomValues(new Uint8Array(1))[0] & 15; const v = c === 'x' ? r : (r & 0x3 | 0x8); return v.toString(16); }); }
 function sortTimesAsc(a, b){ const [ah, am] = a.split(':').map(Number); const [bh, bm] = b.split(':').map(Number); return ah !== bh ? ah - bh : am - bm; }
@@ -14,6 +18,264 @@ function getHM(entry){
   }
   return [0,0];
 }
+
+
+// ===== Debug panel helpers =====
+let debugRequestEl = null;
+let debugResponseEl = null;
+
+/**
+ * Call this once after the DOM is ready to hook up the debug panel elements.
+ */
+function initDebugPanelRefs() {
+  debugRequestEl = document.getElementById('debugRequest');
+  debugResponseEl = document.getElementById('debugResponse');
+
+  const debugCard = document.getElementById('debugCard');
+  const debugToggleBtn = document.getElementById('debugToggleBtn');
+
+  if (debugCard && debugToggleBtn) {
+    // Make sure initial label makes sense
+    if (!debugToggleBtn.textContent) {
+      debugToggleBtn.textContent = 'Hide';
+    }
+
+    debugToggleBtn.addEventListener('click', () => {
+      const isHidden = debugCard.classList.toggle('hidden');
+      debugToggleBtn.textContent = isHidden ? 'Show' : 'Hide';
+    });
+  }
+}
+
+
+/**
+ * A wrapper around fetch that logs the request and response
+ * into the debug panel (if it's present).
+ *
+ * @param {string} label - Short description like "GET /entries" or "POST /entries"
+ * @param {string} url
+ * @param {RequestInit} options
+ * @returns {Promise<Response>}
+ */
+async function debugFetch(label, url, options) {
+  try {
+    const safeOptions = options ? { ...options } : {};
+
+    // 🔹 Inject Authorization header if we have an id_token from Cognito
+    const idToken = window.currentUserIdToken;
+    const headers = {
+      ...(safeOptions.headers || {})
+    };
+    if (idToken) {
+      headers['Authorization'] = `Bearer ${idToken}`;
+    }
+    safeOptions.headers = headers;
+
+    // 🔹 TEMP LOG: see what we're sending
+    console.log('debugFetch header injection', {
+      label,
+      hasIdToken: !!idToken,
+      headers: safeOptions.headers
+    });
+
+    const requestSummary = {
+      label,
+      url,
+      options: safeOptions
+    };
+
+    DebugHistory.req.unshift({ ts: Date.now(), ...requestSummary });
+    DebugHistory.req = DebugHistory.req.slice(0, 5);
+    if (debugRequestEl) {
+      debugRequestEl.textContent = JSON.stringify(DebugHistory.req, null, 2);
+    }
+
+    if (debugRequestEl) {
+      debugRequestEl.textContent = JSON.stringify(requestSummary, null, 2);
+    }
+
+    const res = await fetch(url, safeOptions);
+    const text = await res.text();
+
+    let body;
+    try {
+      body = text ? JSON.parse(text) : null;
+    } catch (_) {
+      body = text;
+    }
+
+    const responseSummary = {
+      label,
+      status: res.status,
+      statusText: res.statusText,
+      body
+    };
+
+    DebugHistory.res.unshift({ ts: Date.now(), ...responseSummary });
+    DebugHistory.res = DebugHistory.res.slice(0, 5);
+    if (debugResponseEl) {
+      debugResponseEl.textContent = JSON.stringify(DebugHistory.res, null, 2);
+    }
+
+    if (debugResponseEl) {
+      debugResponseEl.textContent = JSON.stringify(responseSummary, null, 2);
+    }
+
+    if (!res.ok) {
+      throw new Error(text || res.statusText);
+    }
+
+    return body;
+  } catch (err) {
+    const errorSummary = {
+      label,
+      error: err.message || String(err)
+    };
+    if (debugResponseEl) {
+      debugResponseEl.textContent = JSON.stringify(errorSummary, null, 2);
+    }
+    throw err;
+  }
+}
+
+// ===== end debug panel helpers =====
+
+
+// ===== Cognito / role helpers role detection =====
+
+function parseJwt(token) {
+  try {
+    const payload = token.split('.')[1];
+    const padded = payload.replace(/-/g, '+').replace(/_/g, '/');
+    const decoded = atob(padded);
+    return JSON.parse(decoded);
+  } catch (_) {
+    return null;
+  }
+}
+
+function getGroupsFromIdToken(idToken) {
+  const payload = parseJwt(idToken);
+  if (!payload) return [];
+  const groups = payload['cognito:groups'];
+  if (Array.isArray(groups)) return groups;
+  if (typeof groups === 'string') return [groups];
+  return [];
+}
+
+function getRoleFromGroups(groups) {
+  if (groups.includes('Admins')) return 'Admin';
+  if (groups.includes('Agents')) return 'Agent';
+  return 'Unknown';
+}
+
+/**
+ * Determine the current user's role.
+ *
+ * Priority:
+ *  1) URL override: ?role=Admin or ?role=Agent
+ *  2) Cognito id_token in URL hash -> cognito:groups
+ *  3) Default: Admin
+ */
+function initAuthRole() {
+  let role = 'Admin'; // default if nothing else is set
+
+  // 1) URL override: ?role=Admin or ?role=Agent
+  try {
+    const searchParams = new URLSearchParams(window.location.search || '');
+    const urlRole = searchParams.get('role');
+    if (urlRole === 'Admin' || urlRole === 'Agent') {
+      role = urlRole;
+      console.log('initAuthRole: using role from URL param:', role);
+      window.currentUserRole = role;
+      return role;
+    }
+  } catch (_) {
+    // ignore; fall through
+  }
+
+  // 2) Look for id_token in URL hash from Cognito Hosted UI
+  let idToken = null;
+  const hash = window.location.hash || '';
+  if (hash.startsWith('#')) {
+    const params = new URLSearchParams(hash.substring(1));
+    idToken = params.get('id_token');
+    if (idToken) {
+      // Clean up the hash so it doesn't clutter the URL
+      window.location.hash = '';
+    }
+  }
+
+  if (idToken) {
+    const groups = getGroupsFromIdToken(idToken);
+    role = getRoleFromGroups(groups);
+    window.currentUserIdToken = idToken;
+    window.currentUserGroups = groups;
+    console.log('initAuthRole: using role from id_token groups:', role, groups);
+  } else {
+    console.log('initAuthRole: no URL role and no id_token, using default:', role);
+  }
+
+  console.log('initAuthRole resolved role:', role);
+  window.currentUserRole = role;
+  applyAuthButtonsVisibility();
+  return role;
+}
+
+function applyRoleToUi(role) {
+  const gearBtn = document.getElementById('toggleConfigBtn');
+  const debugCard = document.getElementById('debugCard');
+
+  if (role !== 'Admin') {
+    if (gearBtn) gearBtn.style.display = 'none';
+    if (debugCard) debugCard.style.display = 'none';
+  } else {
+    if (gearBtn) gearBtn.style.display = '';
+    if (debugCard) debugCard.style.display = '';
+  }
+}
+
+function getCognitoConfig() {
+  return (window.AppConfig && window.AppConfig.cognito) || null;
+}
+
+function buildCognitoLoginUrl() {
+  const c = getCognitoConfig();
+  if (!c) return null;
+
+  const params = new URLSearchParams({
+    client_id: c.clientId,
+    response_type: 'token',
+    scope: 'email openid phone profile',
+    redirect_uri: c.redirectUri
+  });
+
+  return `https://${c.domain}/login?${params.toString()}`;
+}
+
+function buildCognitoLogoutUrl() {
+  const c = getCognitoConfig();
+  if (!c) return null;
+
+  const params = new URLSearchParams({
+    client_id: c.clientId,
+    logout_uri: c.logoutUri
+  });
+
+  return `https://${c.domain}/logout?${params.toString()}`;
+}
+
+function applyAuthButtonsVisibility() {
+  const signInBtn = document.getElementById('signInBtn');
+  const signOutBtn = document.getElementById('signOutBtn');
+  const hasToken = !!window.currentUserIdToken;
+
+  if (signInBtn) signInBtn.style.display = hasToken ? 'none' : '';
+  if (signOutBtn) signOutBtn.style.display = hasToken ? '' : 'none';
+}
+
+// ===== end Cognito / role helpers =====
+
 
 // Convert a wall time in a given TZ to a UTC ISO string
 function tzWallToUtc(y, mo, da, hh, mm, zone){
@@ -102,7 +364,9 @@ const Store = (() => {
     try {
       const curDate = scheduledAtUtc.slice(0, 10);
       const curTime = scheduledAtUtc.slice(11, 16);
-      const res = await fetch(`${base}/entries/${encodeURIComponent(id)}`, {
+      const url = `${base}/entries/${encodeURIComponent(id)}`;
+
+      await debugFetch('PATCH /entries', url, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -111,7 +375,7 @@ const Store = (() => {
           ...patch
         })
       });
-      if (!res.ok) throw new Error(await res.text());
+
       return { ok: true };
     } catch (err) {
       console.error('API update failed:', err);
@@ -126,10 +390,12 @@ const Store = (() => {
     try {
       const d = scheduledAtUtc.slice(0, 10);
       const t = scheduledAtUtc.slice(11, 16);
-      const res = await fetch(`${base}/entries/${encodeURIComponent(id)}?date=${encodeURIComponent(d)}&time=${encodeURIComponent(t)}`, {
+      const url = `${base}/entries/${encodeURIComponent(id)}?date=${encodeURIComponent(d)}&time=${encodeURIComponent(t)}`;
+
+      await debugFetch('DELETE /entries', url, {
         method: 'DELETE'
       });
-      if (!res.ok) throw new Error(await res.text());
+      
       return { ok: true };
     } catch (err) {
       console.error('API delete failed:', err);
@@ -172,16 +438,17 @@ const Store = (() => {
         customerTzLabel: tzLabel || undefined
       };
 
-      const res = await fetch(`${base}/entries`, {
+      const url = `${base}/entries`;
+
+      const json = await debugFetch("POST /entries", url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
 
-      const text = await res.text();
-      if (!res.ok) throw new Error(text || res.statusText);
-      const json = text ? JSON.parse(text) : {};
-      return { ok: true, id: json.id || entry.id, server: json };
+      // json is already the parsed response body from the server
+      return { ok: true, id: (json && json.id) || entry.id, server: json };
+
     } catch (err) {
       console.error("API create failed:", err);
       alert("API create failed: " + (err && err.message ? err.message : err));
@@ -220,6 +487,9 @@ async function loadCapacity() {
 
 function applyConfig(obj){
   if (!obj) return;
+
+  // 🔹 Make app-config.json visible to the whole app
+  window.AppConfig = obj;
 
   // Existing capacity handling
   if (obj.version >= 2 && obj.groups) capacityGroups = obj.groups;
@@ -265,16 +535,51 @@ function applyConfig(obj){
 
 
 
-async function loadConfigFromUrl(url) {
+async function loadConfigFromUrl(url){
   try {
     const res = await fetch(url, { cache: 'no-store' });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const json = await res.json();
     applyConfig(json);
+
+    // NEW: push defaults into Settings the first time (or if still "default")
+    try {
+      const s = Store.getSettings() || {};
+      const next = { ...s };
+      const def  = json.defaults || {};
+      const lock = json.lock || {};
+
+      // apiBase: use config when locked, or if settings doesn’t have one yet
+      if (json.apiBase && (lock.apiBase || !s.apiBase)) {
+        next.apiBase = json.apiBase;
+      }
+
+      // queueKey: adopt config default if settings is missing or still "default"
+      if (def.queueKey && (!s.queueKey || s.queueKey === 'default')) {
+        next.queueKey = def.queueKey;
+      }
+
+      // tz / capTz / notifyAhead: only fill if settings doesn’t have them yet
+      if (def.tz && !s.tz) next.tz = def.tz;
+      if (def.capTz && !s.capTz) next.capTz = def.capTz;
+      if (typeof def.notifyAhead === 'number' && typeof s.notifyAhead !== 'number') {
+        next.notifyAhead = def.notifyAhead;
+      }
+
+      // remember where config came from
+      if (url && s.configUrl !== url) {
+        next.configUrl = url;
+      }
+
+      Store.saveSettings(next);
+    } catch (_) {
+      // don’t let settings failure break the app
+    }
   } catch (e) {
-    console.warn('Failed to load config: ' + e.message);
+    console.warn('Failed to load config:', e.message);
   }
 }
+
 
 function loadConfigFromFile(file){ const reader = new FileReader(); reader.onload = () => { try { const json = JSON.parse(reader.result); applyConfig(json); } catch(e){ alert('Invalid JSON: ' + e.message); } }; reader.readAsText(file); }
 
@@ -419,7 +724,21 @@ function saveSettings() {
 
 // UI collapse state
 function updateToggleTitle(){ const collapsed = containerEl.classList.contains('config-collapsed'); toggleConfigBtn.title = collapsed ? 'Show settings panel' : 'Hide settings panel'; toggleConfigBtn.setAttribute('aria-pressed', (!collapsed).toString()); }
-function setCollapsed(collapsed){ containerEl.classList.toggle('config-collapsed', collapsed); Store.saveUi({ collapsed }); updateToggleTitle(); }
+function setCollapsed(collapsed) {
+  if (!containerEl || !toggleConfigBtn) return;
+
+  if (collapsed) {
+    // Hide left panel
+    containerEl.classList.add('config-collapsed');
+    toggleConfigBtn.title = 'Show settings panel';
+    toggleConfigBtn.setAttribute('aria-pressed', 'false');
+  } else {
+    // Show left panel
+    containerEl.classList.remove('config-collapsed');
+    toggleConfigBtn.title = 'Hide settings panel';
+    toggleConfigBtn.setAttribute('aria-pressed', 'true');
+  }
+}
 function restoreUi(){ const ui = Store.getUi(); if (ui && typeof ui.collapsed === 'boolean') { containerEl.classList.toggle('config-collapsed', ui.collapsed); } updateToggleTitle(); }
 
 function ensureDate() {
@@ -708,48 +1027,47 @@ async function apiCreateInline(base, useApi, entry) {
   if (!useApi || !base) return { ok: true, id: entry.id };
 
   try {
+    // derive date/time from scheduledAt (existing logic)
     const d = entry.scheduledAt.slice(0, 10);
     const t = entry.scheduledAt.slice(11, 16);
 
-    // --- TZ: use the UI-selected timezone for the customer ---
-    const tzId =
-      (typeof currentTz === 'function' && currentTz()) ||
-      (tzSelect && tzSelect.value) ||
-      (Intl.DateTimeFormat().resolvedOptions().timeZone) ||
-      'UTC';
+    const url = `${base}/entries`;
 
-    // For now we use the same string for display; you can later map it to “Arizona Time”, etc.
-    const tzLabel = tzId;
-    // ---------------------------------------------------------
-
-    const body = {
-
+    // build a conservative payload; keep what your API expects
+    const payload = {
       id: entry.id,
       date: d,
       time: t,
-      groupKey: entry.queueKey,
-      customer: entry.customerName || entry.name || "",
+      scheduledDate: d,
+      scheduledAt: entry.scheduledAt,
+      durationMin: entry.durationMin,
+      groupKey: entry.groupKey,
+      queueArn: entry.queueArn,
+      queueName: entry.queueName,
+
+      // names/phone fields – pick whatever your API already accepts
+      customer: entry.customer || entry.customerName || entry.name,
+      customerName: entry.customerName || entry.customer || entry.name,
+      name: entry.name || entry.customer || entry.customerName,
       phone: entry.phone,
-      agentId: entry.agentId || "",
-      notes: entry.notes || "",
-      capacityKey: entry.capacityKey || "default",
-      customerTz: tzId || undefined,
-      customerTzLabel: tzLabel || undefined
+      notes: entry.notes,
+      agentId: entry.agentId,
+
+      // timezone fields you recently added
+      customerTz: entry.customerTz,
+      customerTzLabel: entry.customerTzLabel
     };
 
-    const res = await fetch(`${base}/entries`, {
+    const json = await debugFetch('POST /entries (inline)', url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
+      body: JSON.stringify(payload)
     });
 
-    const text = await res.text();
-    if (!res.ok) throw new Error(text || res.statusText);
-    const json = text ? JSON.parse(text) : {};
-    return { ok: true, id: json.id || entry.id, server: json };
+    return { ok: true, id: (json && json.id) || entry.id, server: json };
   } catch (err) {
-    console.error('API create failed:', err);
-    alert('API create failed: ' + (err?.message || err));
+    console.error('apiCreateInline failed:', err);
+    alert('API create failed: ' + (err && err.message ? err.message : err));
     return { ok: false };
   }
 }
@@ -866,10 +1184,12 @@ async function loadFromApi(date) {
     const base = s.apiBase;
     if (!base) return;
 
-    const res = await fetch(`${base}/entries?date=${encodeURIComponent(date)}`);
-    const text = await res.text();
-    if (!res.ok) throw new Error(text || res.statusText);
-    const serverItems = text ? JSON.parse(text) : [];
+    const url = `${base}/entries?date=${encodeURIComponent(date)}`;
+
+    // debugFetch now returns the parsed body directly, not a Response object.
+    const body = await debugFetch('GET /entries', url, { method: 'GET' });
+
+    const serverItems = Array.isArray(body) ? body : [];
     const normalized = serverItems.map(normalizeFromServer);
 
     replaceDay(date, normalized);
@@ -879,6 +1199,8 @@ async function loadFromApi(date) {
     console.error('loadFromApi failed', err);
   }
 }
+
+
 
 
 // Shared helper: delete by server id + UTC ISO (used by both tables and timeslot chips)
@@ -893,9 +1215,7 @@ async function deleteByIdIso(id, iso) {
   if (!base) throw new Error('API Base URL is not set (Settings → API Base URL).');
 
   const url = `${base}/entries/${encodeURIComponent(id)}?date=${encodeURIComponent(d)}&time=${encodeURIComponent(t)}`;
-  const res = await fetch(url, { method: 'DELETE' });
-  const text = await res.text();
-  if (!res.ok) throw new Error(text || res.statusText);
+  await debugFetch('DELETE', url, { method: 'DELETE' });
 }
 
 
@@ -928,6 +1248,39 @@ function bindEventsOnce(){
   if (resetConfigBtn) resetConfigBtn.addEventListener('click', () => { capacityGroups = null; Store.clearConfig(); flashTag('Config cleared'); populateQueues(); buildSlots(); });
   if (resetLayoutBtn) resetLayoutBtn.addEventListener('click', () => { Store.clearUi(); containerEl.classList.remove('config-collapsed'); updateToggleTitle(); flashTag('Layout reset'); });
 
+    // 🔹 NEW: sign-in / sign-out buttons
+  const signInBtn = document.getElementById('signInBtn');
+  const signOutBtn = document.getElementById('signOutBtn');
+
+  if (signInBtn) {
+    signInBtn.addEventListener('click', () => {
+      const url = buildCognitoLoginUrl();
+      if (!url) {
+        alert('Cognito is not configured in app-config.json.');
+        return;
+      }
+      window.location.href = url;
+    });
+  }
+
+  if (signOutBtn) {
+    signOutBtn.addEventListener('click', () => {
+      const url = buildCognitoLogoutUrl();
+      if (!url) {
+        alert('Cognito is not configured in app-config.json.');
+        return;
+      }
+
+      // Optional: clear local auth state before leaving
+      window.currentUserIdToken = null;
+      window.currentUser = null;
+      window.currentUserGroups = null;
+      window.currentUserRole = null;
+
+      window.location.href = url;
+    });
+  }
+
   // Modal
   if (closeModalBtn) closeModalBtn.addEventListener('click', (e) => { e.preventDefault(); closeModal(); });
   if (cancelBtn) cancelBtn.addEventListener('click', (e) => { e.preventDefault(); closeModal(); });
@@ -949,15 +1302,14 @@ function bindEventsOnce(){
     const d = curIso.slice(0, 10);   // YYYY-MM-DD
     const t = curIso.slice(11, 16);  // HH:MM
 
-    const res = await fetch(`${base}/entries/${encodeURIComponent(id)}?date=${encodeURIComponent(d)}&time=${encodeURIComponent(t)}`, {
+    const url = `${base}/entries/${encodeURIComponent(id)}?date=${encodeURIComponent(d)}&time=${encodeURIComponent(t)}`;
+
+    await debugFetch('DELETE /entries', url, {
       method: 'DELETE'
     });
 
-    const text = await res.text();
-    if (!res.ok) throw new Error(text || res.statusText);
     return { ok: true };
   }
-
 
 
   // Delete button (only works in edit mode)
@@ -977,8 +1329,6 @@ function bindEventsOnce(){
     buildSlots();
     closeModal();
   });
-
-
 
   if (deleteBtn) deleteBtn.addEventListener('click', (e) => { e.preventDefault(); if (!viewEntryId) return; if (confirm('Delete this entry?')) { Store.remove(dateEl.value, viewEntryId); renderEntries(); buildSlots(); closeModal(); } });
   if (modal) {
@@ -1015,12 +1365,12 @@ async function apiDeleteInline(base, useApi, entry) {
   const d = iso.slice(0,10);
   const t = iso.slice(11,16);
 
-  const res = await fetch(`${Store.getSettings().apiBase}/entries/${encodeURIComponent(entry.id)}?date=${encodeURIComponent(d)}&time=${encodeURIComponent(t)}`, {
+  const url = `${Store.getSettings().apiBase}/entries/${encodeURIComponent(entry.id)}?date=${encodeURIComponent(d)}&time=${encodeURIComponent(t)}`;
+
+  await debugFetch('DELETE /entries', url, {
     method: 'DELETE'
   });
 
-  const text = await res.text();
-  if (!res.ok) throw new Error(text || res.statusText);
   return { ok: true };
 }
 
@@ -1062,6 +1412,8 @@ document.addEventListener('DOMContentLoaded', () => {
   window.__tsInitDone = true;
 
   bindEventsOnce();
+  // 🔹 NEW: hook debug helpers to the DOM elements in index.html
+  initDebugPanelRefs();
 
   (async () => {
     try {
@@ -1109,12 +1461,22 @@ document.addEventListener('DOMContentLoaded', () => {
       migrateExistingEntries();
       buildSlots();
       renderEntries();
+
+      // 🔹 NEW: determine role and adjust UI
+      const role = initAuthRole();
+      applyRoleToUi(role);
+
+      // 🔹 Force the settings/left panel to start collapsed
+      if (typeof setCollapsed === 'function') {
+        setCollapsed(true);
+      }
     } catch (err) {
       alert('Startup error: ' + err.message);
       console.error(err);
     }
   })();
 });
+
 
 function openEntry(e) {
   try {
@@ -1154,7 +1516,9 @@ async function apiUpdateInline(base, useApi, id, patch, curIso) {
 
     console.info('PATCH debug →', { id, curIso, curDate, curTime, patch });
 
-    const res = await fetch(`${base}/entries/${encodeURIComponent(id)}`, {
+    const url = `${base}/entries/${encodeURIComponent(id)}`;
+
+    await debugFetch('PATCH /entries', url, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -1163,6 +1527,7 @@ async function apiUpdateInline(base, useApi, id, patch, curIso) {
         ...patch
       })
     });
+
 
     const text = await res.text();
     if (!res.ok) {
@@ -1287,11 +1652,8 @@ document.addEventListener('click', async function onEntryDeleteClick(ev) {
     const url = `${base}/entries/${encodeURIComponent(id)}?date=${encodeURIComponent(d)}&time=${encodeURIComponent(t)}`;
     console.info('[entry-del] fetch', url);
 
-    const res = await fetch(url, { method: 'DELETE' });
-    const text = await res.text();
-    console.info('[entry-del] response', res.status, text);
-
-    if (!res.ok) throw new Error(text || res.statusText);
+    const body = await debugFetch('DELETE', url, { method: 'DELETE' });
+    console.info('[entry-del] response body', body);
 
     if (dateEl && dateEl.value) {
       Store.remove(dateEl.value, id);
@@ -1345,10 +1707,8 @@ document.addEventListener('click', async function onSlotDelete(ev) {
     if (!apiBase) throw new Error('API Base URL is not set in Settings.');
 
     const url = `${apiBase}/entries/${encodeURIComponent(id)}?date=${encodeURIComponent(d)}&time=${encodeURIComponent(t)}`;
-    const res = await fetch(url, { method: 'DELETE' });
-    const text = await res.text();
-    if (!res.ok) throw new Error(text || res.statusText);
-
+    await debugFetch('DELETE', url, { method: 'DELETE' });
+    
     if (dateEl && dateEl.value) Store.remove(dateEl.value, id);
     buildSlots();
     renderEntries();

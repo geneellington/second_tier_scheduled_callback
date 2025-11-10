@@ -27,6 +27,11 @@
       color: var(--text);
     }
 
+    .hidden {
+      display: none;
+    }
+
+
     /* Layout */
     .container {
       display: grid;
@@ -80,6 +85,20 @@
     .gear-btn:hover { opacity: 1; transform: rotate(20deg); transition: transform .2s ease; }
     .gear-btn:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--ring); border-radius: 50%; }
     .gear-btn svg { width: 18px; height: 18px; display:block; }
+
+    /* Sign-in Sign-out */
+    .text-btn {
+      border: none;
+      background: none;
+      padding: 4px 8px;
+      margin-left: 8px;
+      font-size: 0.9rem;
+      cursor: pointer;
+      color: #333;
+    }
+    .text-btn:hover {
+      text-decoration: underline;
+    }
 
     /* Timeslots */
     .slots { height: 70vh; overflow: auto; padding: 8px; }
@@ -142,6 +161,52 @@
     .chip .kill { cursor: pointer; padding: 0 6px; border-radius: 8px; }
     .chip .kill:hover { background: rgba(255,255,255,.14); color: var(--danger); }
 
+  /* ... your existing styles ... */
+
+    .debug-pre {
+      white-space: pre-wrap;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size: 13px;
+      line-height: 1.4;
+      max-height: 260px;
+      overflow: auto;
+
+      /* Make it much more readable */
+      background: #222;       /* dark background */
+      color: #f5f5f5;         /* bright text */
+      border: 1px solid #444;
+      padding: 10px;
+      border-radius: 4px;
+    }
+
+    .debug-row {
+      margin-bottom: 12px;
+    }
+    .ghost-button {
+      border: 1px solid #ccc;
+      background: transparent;
+      padding: 4px 8px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+    }
+
+  </style>
+
+    <!-- NEW: Luxon for timezone handling -->
+  <script src="https://cdn.jsdelivr.net/npm/luxon@3/build/global/luxon.min.js"></script>
+
+  <!-- NEW: Simple styling for the preview box -->
+  <style>
+    .preview-box {
+      padding: 8px;
+      border-radius: 6px;
+      border: 1px solid #ccc;
+      font-size: 0.9rem;
+      line-height: 1.4;
+      background: #f7f7f7;
+      margin-top: 4px;
+    }
   </style>
 </head>
 <body>
@@ -166,9 +231,10 @@
       <div class="card">
         <div class="card-header">
           <h3>Settings</h3>
-          <span class="tag">Client‑side only</span>
+          <button id="settingsToggle" type="button" class="ghost-button">Show</button>
+          <span class="tag">Client-side only</span>
         </div>
-        <div class="card-body settings">
+        <div class="card-body settings hidden" id="settingsPanel">
           <div class="grid-2">
             <div>
               <label>API Base URL (optional)</label>
@@ -257,12 +323,14 @@
               </div>
               <span class="tag" id="dateTag"></span>
             </div>
-            <button class="gear-btn" id="toggleConfigBtn" title="Hide settings panel" aria-pressed="true">
+            <button class="gear-btn" id="toggleConfigBtn" title="Show settings panel" aria-pressed="false">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"/>
                 <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c0 .66.39 1.26 1 1.51.31.13.65.2 1 .2H21a2 2 0 1 1 0 4h-.09c-.35 0-.69.07-1 .2-.61.25-1 .85-1 1.51Z"/>
               </svg>
             </button>
+            <button class="text-btn" id="signInBtn" type="button">Sign in</button>
+            <button class="text-btn" id="signOutBtn" type="button" style="display:none;">Sign out</button>
           </div>
         </div>
         <div class="card-body">
@@ -360,5 +428,204 @@
   </dialog>
 
   <script src="app.js"></script>
+
+  <!-- NEW: Timezone preview panel (UI) -->
+  <div id="timePreviewPanel" style="max-width: 600px; margin: 16px auto;">
+    <h3>Time Preview</h3>
+
+    <!-- Time zone selector (does NOT replace your existing fields) -->
+    <div style="margin-bottom: 8px;">
+      <label for="customerTzSelect">Customer Time Zone</label>
+      <select id="customerTzSelect">
+        <option value="America/New_York" selected>Eastern Time (US &amp; Canada)</option>
+        <option value="America/Chicago">Central Time (US &amp; Canada)</option>
+        <option value="America/Denver">Mountain Time (US &amp; Canada)</option>
+        <option value="America/Los_Angeles">Pacific Time (US &amp; Canada)</option>
+      </select>
+    </div>
+
+    <div id="timePreview" class="preview-box">
+      <div id="previewLocal">Select a date and time to see a preview.</div>
+      <div id="previewUtc"></div>
+      <div id="previewReminder"></div>
+      <div id="previewNotify"></div>
+    </div>
+  </div>
+
+  
+  <!-- NEW: Timezone-aware preview script -->
+
+  <script>
+    const { DateTime } = luxon;
+    const NOTIFY_AHEAD_MINUTES = 15; // adjust if your reminder window is different
+
+    // Helper: try to find a control by its label text (e.g. "Date", "Time")
+    function findLabeledControl(labelStartsWith, selector) {
+      const labels = Array.from(document.querySelectorAll('label'));
+      for (const label of labels) {
+        const text = (label.textContent || '').trim();
+        if (text.startsWith(labelStartsWith)) {
+          const forId = label.getAttribute('for');
+          if (forId) {
+            const el = document.getElementById(forId);
+            if (el && (!selector || el.matches(selector))) {
+              return el;
+            }
+          }
+        }
+      }
+      // Fallback: just grab the first element matching selector
+      return selector ? document.querySelector(selector) : null;
+    }
+
+    function updateTimePreviews() {
+      // Try to locate your existing Date/Time controls automatically
+      const dateInput =
+        findLabeledControl('Date', 'input[type="date"]') ||
+        document.querySelector('input[type="date"]');
+
+      const timeSelect =
+        findLabeledControl('Time', 'select') ||
+        document.querySelector('select');
+
+      const tzSelect = document.getElementById('customerTzSelect');
+
+      const previewLocal = document.getElementById('previewLocal');
+      const previewUtc = document.getElementById('previewUtc');
+      const previewReminder = document.getElementById('previewReminder');
+      const previewNotify = document.getElementById('previewNotify');
+
+      if (!previewLocal) return;
+
+      if (!dateInput || !timeSelect) {
+        previewLocal.textContent = 'Could not find Date/Time controls on this page.';
+        if (previewUtc) previewUtc.textContent = '';
+        if (previewReminder) previewReminder.textContent = '';
+        if (previewNotify) previewNotify.textContent = '';
+        return;
+      }
+
+      const date = dateInput.value;     // might be "", "2025-10-09", etc.
+      const time = timeSelect.value;    // e.g. "15:30" or "" if not selected
+      const tz = tzSelect ? tzSelect.value : 'America/New_York';
+      const tzLabel = tzSelect
+        ? tzSelect.options[tzSelect.selectedIndex].text
+        : 'Customer Time Zone';
+
+      if (!date || !time) {
+        previewLocal.textContent = 'Select a date and time to see a preview.';
+        if (previewUtc) previewUtc.textContent = '';
+        if (previewReminder) previewReminder.textContent = '';
+        if (previewNotify) previewNotify.textContent = '';
+        return;
+      }
+
+      const localDt = DateTime.fromISO(`${date}T${time}`, { zone: tz });
+      if (!localDt.isValid) {
+        previewLocal.textContent = 'Invalid date/time selection.';
+        if (previewUtc) previewUtc.textContent = '';
+        if (previewReminder) previewReminder.textContent = '';
+        if (previewNotify) previewNotify.textContent = '';
+        return;
+      }
+
+      const scheduledUtc = localDt.toUTC();
+      const reminderLocal = localDt.minus({ minutes: NOTIFY_AHEAD_MINUTES });
+
+      // Local display
+      previewLocal.textContent =
+        `Customer local time: ${localDt.toLocaleString(DateTime.DATETIME_MED)} (${tzLabel})`;
+
+      // UTC storage
+      if (previewUtc) {
+        previewUtc.textContent =
+          'Stored as UTC: ' +
+          scheduledUtc.toISO({ suppressSeconds: true, includeOffset: true });
+      }
+
+      // Reminder
+      if (previewReminder) {
+        previewReminder.textContent =
+          'Reminder (about ' + NOTIFY_AHEAD_MINUTES + ' minutes before): ' +
+          reminderLocal.toLocaleString(DateTime.DATETIME_MED) +
+          ' (' + tzLabel + ')';
+      }
+
+      // At-time callback + relative time
+      if (previewNotify) {
+        const diff = localDt.diffNow();
+        if (diff.as('milliseconds') > 0) {
+          const hours = Math.floor(diff.as('hours'));
+          const minutes = Math.round(diff.as('minutes') % 60);
+          const parts = [];
+          if (hours) parts.push(hours + ' hour' + (hours !== 1 ? 's' : ''));
+          if (minutes) parts.push(minutes + ' minute' + (minutes !== 1 ? 's' : ''));
+          const inText = parts.length ? 'in ' + parts.join(' ') : 'very soon';
+
+          previewNotify.textContent =
+            'At-time callback: ' +
+            localDt.toLocaleString(DateTime.DATETIME_MED) +
+            ' (' + tzLabel + ') – ' + inText;
+        } else {
+          previewNotify.textContent =
+            'At-time callback: ' +
+            localDt.toLocaleString(DateTime.DATETIME_MED) +
+            ' (' + tzLabel + ') – time is in the past.';
+        }
+      }
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+      // Try to hook into your existing controls
+      const dateInput =
+        findLabeledControl('Date', 'input[type="date"]') ||
+        document.querySelector('input[type="date"]');
+
+      const timeSelect =
+        findLabeledControl('Time', 'select') ||
+        document.querySelector('select');
+
+      const tzSelect = document.getElementById('customerTzSelect');
+
+      if (dateInput) dateInput.addEventListener('change', updateTimePreviews);
+      if (timeSelect) timeSelect.addEventListener('change', updateTimePreviews);
+      if (tzSelect) tzSelect.addEventListener('change', updateTimePreviews);
+
+      // Run once on load
+      updateTimePreviews();
+
+      const settingsPanel = document.getElementById('settingsPanel');
+      const settingsToggle = document.getElementById('settingsToggle');
+
+      if (settingsPanel && settingsToggle) {
+        // Start with hidden panel and "Show" label on button
+        settingsToggle.textContent = 'Show';
+
+        settingsToggle.addEventListener('click', () => {
+          const nowHidden = settingsPanel.classList.toggle('hidden');
+          settingsToggle.textContent = nowHidden ? 'Show' : 'Hide';
+        });
+      }
+    });
+  </script>
+  
+    <!-- Debug panel (developer only) -->
+  <div class="card" id="debugCard" style="margin: 20px auto; max-width: 1200px;">
+    <div class="card-header">
+      <h3>Debug</h3>
+      <button id="debugToggleBtn" type="button" class="ghost-button">Hide</button>
+    </div>
+    <div class="card-body">
+      <div class="debug-row">
+        <strong>Last Request:</strong>
+        <pre id="debugRequest" class="debug-pre">(none yet)</pre>
+      </div>
+      <div class="debug-row">
+        <strong>Last Response:</strong>
+        <pre id="debugResponse" class="debug-pre">(none yet)</pre>
+      </div>
+    </div>
+  </div>
+
 </body>
 </html>

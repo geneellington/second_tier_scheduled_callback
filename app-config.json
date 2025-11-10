@@ -1,17 +1,27 @@
 {
-  "version": 1,
   "apiBase": "https://f36ru2h4ua.execute-api.us-east-1.amazonaws.com/prod",
-  "defaults": {
-    "notifyAhead": 15,
-    "tz": "America/Phoenix",
-    "capTz": "America/New_York",
-    "queueKey": "tier2_checking"
+  "defaultTz": "America/Phoenix",
+  "defaultTzLabel": "America/Phoenix",
+  "notifyAheadMinutes": 2,
+
+  "defaultRole": "Admin",
+
+  "cognito": {
+    "userPoolId": "us-east-1_fZU7hBw8o",
+    "clientId": "5g7qludnsknpgrdjus7sa1ovgj",
+    "region": "us-east-1",
+    "domain": "us-east-1fzu7hbw8o.auth.us-east-1.amazoncognito.com",
+    "redirectUri": "https://d84l1y8p4kdic.cloudfront.net",
+    "logoutUri": "https://d84l1y8p4kdic.cloudfront.net"
   },
-  "lock": {
-    "apiBase": true,
-    "tz": false,
-    "capTz": false,
-    "queueKey": false,
-    "notifyAhead": false
-  }
+  "queues": [
+    {
+      "id": "tier2_checking",
+      "label": "Tier 2 – Checking"
+    },
+    {
+      "id": "tier2_savings",
+      "label": "Tier 2 – Savings"
+    }
+  ]
 }
