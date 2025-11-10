@@ -7,12 +7,12 @@
   "defaultRole": "Admin",
 
   "cognito": {
-    "userPoolId": "us-east-1_fZU7hBw8o",
-    "clientId": "5g7qludnsknpgrdjus7sa1ovgj",
-    "region": "us-east-1",
-    "domain": "us-east-1fzu7hbw8o.auth.us-east-1.amazoncognito.com",
-    "redirectUri": "https://d84l1y8p4kdic.cloudfront.net",
-    "logoutUri": "https://d84l1y8p4kdic.cloudfront.net"
+  "userPoolId": "us-east-1_fZU7hBw8o",
+  "clientId": "5g7qludnsknpgrdjus7sa1ovgj",
+  "region": "us-east-1",
+  "domain": "us-east-1fzu7hbw8o.auth.us-east-1.amazoncognito.com",
+  "redirectUri": "https://d2l0blcwz7cz3m.cloudfront.net",
+  "logoutUri": "https://d2l0blcwz7cz3m.cloudfront.net"
   },
   "queues": [
     {
