@@ -145,22 +145,54 @@ async function debugFetch(label, url, options) {
 
 function parseJwt(token) {
   try {
-    const payload = token.split('.')[1];
-    const padded = payload.replace(/-/g, '+').replace(/_/g, '/');
-    const decoded = atob(padded);
-    return JSON.parse(decoded);
-  } catch (_) {
+    if (!token) return null;
+    const parts = token.split('.');
+    if (parts.length !== 3) return null;
+
+    const base64 = parts[1]
+      .replace(/-/g, '+')
+      .replace(/_/g, '/');
+    const json = atob(base64);
+    return JSON.parse(json);
+  } catch (e) {
+    console.error('parseJwt failed', e);
     return null;
   }
 }
 
-function getGroupsFromIdToken(idToken) {
+function getUserFromIdToken(idToken) {
   const payload = parseJwt(idToken);
-  if (!payload) return [];
-  const groups = payload['cognito:groups'];
-  if (Array.isArray(groups)) return groups;
-  if (typeof groups === 'string') return [groups];
-  return [];
+  if (!payload) return null;
+
+  const groupsRaw = payload['cognito:groups'];
+  const groups =
+    Array.isArray(groupsRaw) ? groupsRaw :
+    typeof groupsRaw === 'string' ? [groupsRaw] :
+    [];
+
+  return {
+    username: payload['cognito:username'] || payload['username'] || null,
+    email: payload.email || null,
+    phoneNumber: payload.phone_number || null,
+    groups
+  };
+}
+
+function getTokenFromHash(hash, key) {
+  if (!hash) return null;
+
+  const cleaned = hash.startsWith('#') ? hash.slice(1) : hash;
+  const params = new URLSearchParams(cleaned);
+  const token = params.get(key);
+
+  if (token) {
+    window.location.hash = '';
+  }
+  return token;
+}
+
+function initAuthRole() {
+  // ... the cleaned-up version we just installed ...
 }
 
 function getRoleFromGroups(groups) {
