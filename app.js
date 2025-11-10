@@ -206,14 +206,53 @@ function initAuthRole() {
     }
   }
 
-  if (idToken) {
-    const groups = getGroupsFromIdToken(idToken);
-    role = getRoleFromGroups(groups);
-    window.currentUserIdToken = idToken;
-    window.currentUserGroups = groups;
-    console.log('initAuthRole: using role from id_token groups:', role, groups);
+  const params = new URLSearchParams(window.location.search);
+  const roleOverride = params.get('role');
+  let role = (window.AppConfig && window.AppConfig.defaultRole) || 'Admin';
+
+  if (roleOverride) {
+    console.log('initAuthRole: using role from URL param:', roleOverride);
+    role = roleOverride;
+    window.currentUserIdToken = null;
+    window.currentUser = null;
+    window.currentUserGroups = null;
   } else {
-    console.log('initAuthRole: no URL role and no id_token, using default:', role);
+    const hash = window.location.hash || '';
+    const idToken = getTokenFromHash(hash, 'id_token');
+
+    if (idToken) {
+      const user = getUserFromIdToken(idToken);
+      const groups = user ? user.groups : [];
+      role = getRoleFromGroups(groups);
+
+      window.currentUserIdToken = idToken;
+      window.currentUserGroups = groups;
+      window.currentUser = user;
+
+      console.log('initAuthRole: using role from id_token groups:', role, groups, user);
+    } else {
+      // 🔹 No ?role= and no id_token → here’s where we decide what to do
+      console.log('initAuthRole: no URL role and no id_token');
+
+      const host = window.location.hostname;
+      const isLocal =
+        host === '127.0.0.1' ||
+        host === 'localhost';
+
+      const cognitoCfg = getCognitoConfig();
+      if (!isLocal && cognitoCfg) {
+        // In production (CloudFront) with Cognito configured → force login
+        const loginUrl = buildCognitoLoginUrl();
+        console.log('initAuthRole: redirecting to Cognito login:', loginUrl);
+        window.location.href = loginUrl;
+        // We won’t really use the return value after redirect,
+        // but return something explicit anyway.
+        return 'Unknown';
+      }
+
+      // Dev / local path: fall back to defaultRole (e.g. Admin)
+      console.log('initAuthRole: using defaultRole locally:', role);
+    }
   }
 
   console.log('initAuthRole resolved role:', role);
