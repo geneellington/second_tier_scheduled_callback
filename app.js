@@ -1234,16 +1234,38 @@ async function loadFromApi(date) {
   try {
     const s = Store.getSettings ? Store.getSettings() : {};
     const base = s.apiBase;
-    if (!base) return;
+    if (!base) {
+      console.info('loadFromApi: no apiBase configured, skipping');
+      return;
+    }
 
     const url = `${base}/entries?date=${encodeURIComponent(date)}`;
 
-    // debugFetch now returns the parsed body directly, not a Response object.
-    const body = await debugFetch('GET /entries', url, { method: 'GET' });
+    // Build headers (Authorization will be injected by debugFetch if we have an idToken)
+    const hdrs = {};
+    // Content-Type not needed for GET; debugFetch will log and inject auth
+    const serverItems = await debugFetch('GET /entries', url, {
+      method: 'GET',
+      headers: hdrs
+    });
 
-    const serverItems = Array.isArray(body) ? body : [];
-    const normalized = serverItems.map(normalizeFromServer);
+    // serverItems should be an array; if the API ever wraps it, handle that too
+    const itemsArray = Array.isArray(serverItems)
+      ? serverItems
+      : (serverItems && serverItems.items) || [];
 
+    const normalized = itemsArray.map(normalizeFromServer);
+
+    console.log(
+      'loadFromApi: got',
+      itemsArray.length,
+      'items from server; normalized into',
+      normalized.length,
+      'entries for date',
+      date
+    );
+
+    // Replace the entries for this date in local state and re-render UI
     replaceDay(date, normalized);
     renderEntries();
     buildSlots();
@@ -1251,6 +1273,7 @@ async function loadFromApi(date) {
     console.error('loadFromApi failed', err);
   }
 }
+
 
 
 
