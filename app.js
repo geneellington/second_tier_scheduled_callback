@@ -1286,46 +1286,84 @@ function replaceDay(date, entries) {
   }
 }
 
-async function loadFromApi(date) {
+function localDateFromIso(iso, tz) {
+  if (!iso) return "";
+  try {
+    const d = new Date(iso);
+    const fmt = new Intl.DateTimeFormat("en-US", {
+      timeZone: tz,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit"
+    });
+    const parts = fmt.format(d).split("/");
+    // MM/DD/YYYY → YYYY-MM-DD
+    const [mm, dd, yyyy] = parts;
+    return `${yyyy}-${mm}-${dd}`;
+  } catch (_) {
+    return "";
+  }
+}
+
+async function loadFromApi(localDate) {
   try {
     const s = Store.getSettings ? Store.getSettings() : {};
     const base = s.apiBase;
-    if (!base) {
-      console.info('loadFromApi: no apiBase configured, skipping');
-      return;
+    const useApi = s.useApi;
+
+    if (!base || !useApi) return;
+
+    // The date the user picked in the UI
+    const dateStr = localDate || (dateEl && dateEl.value);
+    if (!dateStr) return;
+
+    // Use the same timezone the UI uses for display
+    const tz = (typeof currentTz === "function" && currentTz()) || s.tz || "UTC";
+
+    // dateStr is YYYY-MM-DD
+    const [y, mo, d] = dateStr.split("-").map(Number);
+
+    // Compute the UTC dates that cover this local day
+    // We already have tzWallToUtc elsewhere in the file
+    const startUtcIso = tzWallToUtc(y, mo, d, 0, 0, tz);      // local 00:00
+    const endUtcIso   = tzWallToUtc(y, mo, d, 23, 59, tz);    // local 23:59
+
+    const d1 = startUtcIso.slice(0, 10);  // first UTC date
+    const d2 = endUtcIso.slice(0, 10);    // possibly same, possibly next day
+
+    const datesToFetch = d1 === d2 ? [d1] : [d1, d2];
+
+    const allServerItems = [];
+
+    for (const utcDate of datesToFetch) {
+      const url = `${base}/entries?date=${encodeURIComponent(utcDate)}`;
+      const data = await debugFetch("GET /entries", url, {
+        method: "GET",
+        headers: buildAuthHeaders()
+      });
+      if (Array.isArray(data)) {
+        allServerItems.push(...data);
+      }
     }
 
-    const url = `${base}/entries?date=${encodeURIComponent(date)}`;
+    // Normalize, then keep only those whose LOCAL date matches the UI date
+    const normalized = allServerItems
+      .map(normalizeFromServer)
+      .filter(e => {
+        if (!e.scheduledAt) return true; // very defensive fallback
+        const ld = localDateFromIso(e.scheduledAt, tz);
+        return ld === dateStr;
+      });
 
-    // debugFetch will inject Authorization if we have an idToken
-    const serverItems = await debugFetch('GET /entries', url, {
-      method: 'GET',
-      headers: {}
-    });
-
-    // Server may return an array directly, or wrap it in { items: [...] }
-    const itemsArray = Array.isArray(serverItems)
-      ? serverItems
-      : (serverItems && serverItems.items) || [];
-
-    const normalized = itemsArray.map(normalizeFromServer);
-
-    console.log(
-      'loadFromApi: got',
-      itemsArray.length,
-      'items from server; normalized into',
-      normalized.length,
-      'entries for date',
-      date
-    );
-
-    replaceDay(date, normalized);
+    // Now treat dateStr as the local day for the store
+    replaceDay(dateStr, normalized);
     renderEntries();
     buildSlots();
   } catch (err) {
-    console.error('loadFromApi failed', err);
+    console.error("loadFromApi failed", err);
   }
 }
+
 
 
 // Shared helper: delete by server id + UTC ISO (used by both tables and timeslot chips)
