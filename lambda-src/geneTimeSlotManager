@@ -267,13 +267,25 @@ if (resource === "/entries" && httpMethod === "POST") {
   const now = new Date().toISOString();
 
   // --- compute timestamps for Confirmation / Reminder / Notification ---
-  const scheduledAt     = toISOZ(body.date, body.time); // exact callback moment (UTC)
-  const confirmationAt  = new Date(Date.parse(scheduledAt) + CONFIRM_DELAY_MINUTES*60_000).toISOString(); // after create
-  const reminderAt      = new Date(Date.parse(scheduledAt) - REMINDER_AHEAD_MINUTES*60_000).toISOString(); // before start
-  // Backward-compat field names you already use:
-  const notifyAt        = new Date(Date.parse(scheduledAt) - AHEAD_MIN*60_000).toISOString(); // keep writing this too
-  const scheduledDate   = scheduledAt.slice(0,10);
+  // --- compute timestamps for Confirmation / Reminder / Notification ---
+
+  // Prefer an explicit UTC scheduledAt from the UI (if provided),
+  // otherwise fall back to "date + time" treated as UTC like before.
+  const scheduledAtUtc =
+    body.scheduledAtUtc ||
+    body.scheduledAt ||
+    toISOZ(body.date, body.time);
+
+  // For "what day is this booking on?" use the *local schedule day*
+  // that the UI sent, not the UTC calendar day.
+  const scheduledDate = body.scheduledLocalDate || body.date;
+
+  const confirmationAt  = new Date(Date.parse(scheduledAtUtc) + CONFIRM_DELAY_MINUTES * 60_000).toISOString(); // after create
+  const reminderAt      = new Date(Date.parse(scheduledAtUtc) - REMINDER_AHEAD_MINUTES * 60_000).toISOString(); // before start
+  // Backward-compat field name you already use:
+  const notifyAt        = new Date(Date.parse(scheduledAtUtc) - AHEAD_MIN * 60_000).toISOString();
   const notifyDate      = scheduledDate;
+
 
   const item = {
     PK: `DATE#${body.date}`,
@@ -289,7 +301,7 @@ if (resource === "/entries" && httpMethod === "POST") {
     createdAt: now,
     updatedAt: now,
     // store the four fields used by the schedule Lambda
-    scheduledAt,
+    scheduledAt: scheduledAtUtc,
     scheduledDate,
     confirmationAt,
     reminderAt,
@@ -334,8 +346,7 @@ if (resource === "/entries" && httpMethod === "POST") {
       kind: "confirmation",
   
       // UTC anchor for the contact flow
-      // (you already computed `scheduledAt` earlier; it’s the exact UTC instant)
-      scheduledAtUtc: scheduledAt,
+      scheduledAtUtc: scheduledAtUtc,
   
       // timezone awareness
       customerTz: tz,
@@ -423,13 +434,20 @@ if (resource === "/entries" && httpMethod === "POST") {
       const newSK = `TIME#${targetTime}#ID#${id}`;
 
       // --- compute timestamps for the NEW time ---
-      const scheduledAt     = toISOZ(targetDate, targetTime);
-      const confirmationAt  = new Date(Date.parse(scheduledAt) + CONFIRM_DELAY_MINUTES*60_000).toISOString();
-      const reminderAt      = new Date(Date.parse(scheduledAt) - REMINDER_AHEAD_MINUTES*60_000).toISOString();
+
+      // Treat targetDate/targetTime as the schedule-local date/time
+      // and derive the UTC moment from them.
+      const scheduledAtUtc = toISOZ(targetDate, targetTime);
+
+      // For the schedule grouping, use the new local date directly.
+      const scheduledDate = body.scheduledLocalDate || targetDate;
+
+      const confirmationAt  = new Date(Date.parse(scheduledAtUtc) + CONFIRM_DELAY_MINUTES * 60_000).toISOString();
+      const reminderAt      = new Date(Date.parse(scheduledAtUtc) - REMINDER_AHEAD_MINUTES * 60_000).toISOString();
       // Backward-compat:
-      const notifyAt        = new Date(Date.parse(scheduledAt) - AHEAD_MIN*60_000).toISOString();
-      const scheduledDate   = scheduledAt.slice(0,10);
+      const notifyAt        = new Date(Date.parse(scheduledAtUtc) - AHEAD_MIN * 60_000).toISOString();
       const notifyDate      = scheduledDate;
+
 
 
       const newItem = {
@@ -439,13 +457,14 @@ if (resource === "/entries" && httpMethod === "POST") {
         date: targetDate,
         time: targetTime,
         updatedAt: now,
-        scheduledAt,
+        scheduledAt: scheduledAtUtc,
         scheduledDate,
-        confirmationAt,   // <-- add
-        reminderAt,       // <-- add
+        confirmationAt,
+        reminderAt,
         notifyAt,
         notifyDate
       };
+
       // apply any additional fields from the PATCH body
       for (const [k, v] of Object.entries(toSet)) newItem[k] = v;
 
