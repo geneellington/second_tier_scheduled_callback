@@ -1339,7 +1339,6 @@ async function loadFromApi(localDate) {
       const url = `${base}/entries?date=${encodeURIComponent(utcDate)}`;
       const data = await debugFetch("GET /entries", url, {
         method: "GET",
-        headers: buildAuthHeaders()
       });
       if (Array.isArray(data)) {
         allServerItems.push(...data);
