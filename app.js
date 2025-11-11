@@ -691,7 +691,11 @@ let editEntryId = null;  // when not null, modal is in edit mode
 let viewEntryId = null; // id of entry opened from chip
 
 function currentTz(){ const s = Store.getSettings(); return (s && s.tz) ? s.tz : sysTz; }
-function capacityTz(){ const s = Store.getSettings(); return (s && s.capTz) ? s.capTz : 'America/New_York'; }
+function capacityTz() {
+  const cfg = window.AppConfig || {};
+  return cfg.capacityTz || cfg.defaultTz || Intl.DateTimeFormat().resolvedOptions().timeZone;
+}
+
 
 function populateTimezoneOptions(){
   const list = (Intl.supportedValuesOf && Intl.supportedValuesOf('timeZone')) ||
@@ -900,15 +904,31 @@ function buildSlots() {
       return { baseHHMM: hhmm, utcIso, dispHH: disp.hh, dispMM: disp.mm, dispLabel: disp.label, cap: capacityFor(hhmm) };
     }).sort((a,b) => new Date(a.utcIso) - new Date(b.utcIso));
 
-    const booked = new Map();
-    const perSlot = new Map();
-    for (const e of entries) {
-      const sameQueue = (e.queueKey || 'default') === (qMeta.key || 'default');
-      if (!sameQueue || !e.scheduledAt) continue;
-      const key = minuteKey(e.scheduledAt);
-      booked.set(key, (booked.get(key) || 0) + 1);
-      const arr = perSlot.get(key) || []; arr.push(e); perSlot.set(key, arr);
-    }
+const booked = new Map();
+const perSlot = new Map();
+for (const e of entries) {
+  const entryQueueKey = e.queueKey || 'default';
+
+  const matchesQueueKey =
+    entryQueueKey === (qMeta.key || 'default');
+
+  const matchesByArn =
+    e.queueArn && qMeta.arn && e.queueArn === qMeta.arn;
+
+  const matchesByName =
+    !e.queueKey && e.queueName && e.queueName === qMeta.name;
+
+  const sameQueue = matchesQueueKey || matchesByArn || matchesByName;
+
+  if (!sameQueue || !e.scheduledAt) continue;
+
+  const key = minuteKey(e.scheduledAt);
+  booked.set(key, (booked.get(key) || 0) + 1);
+  const arr = perSlot.get(key) || [];
+  arr.push(e);
+  perSlot.set(key, arr);
+}
+
 
     for (const s of slotObjs) {
       if (!s.cap) continue;
@@ -999,34 +1019,37 @@ function buildSlots() {
 function renderEntries() {
   const dateStr = dateEl.value;
   const entries = Store.list(dateStr).slice();
+  console.log('renderEntries:', dateStr, 'items:', entries.length);  // 🔹 add this
+
   entries.sort((a,b) => minutesOfDay(...getHM(a)) - minutesOfDay(...getHM(b)));
   entriesTbody.innerHTML = '';
   for (const e of entries) {
     const tr = document.createElement('tr');
     const notesSafe = e.notes ? String(e.notes).replace(/</g,'&lt;') : '';
-  tr.innerHTML = `
-    <td>${e.timeLocal || (getHM(e).map(n=>String(n).padStart(2,'0')).join(':'))}</td>
-    <td><code>${e.scheduledAt || ''}</code></td>
-    <td><code>${e.notifyAt || ''}</code></td>
-    <td>${e.customerName || e.name || ''}</td>
-    <td title="${e.phone || ''}">${e.phoneDisplay || prettyPhone(e.phone || '')}</td>
-    <td>${e.queueName || e.queueId || ''}</td>
-    <td>${notesSafe}</td>
-    <td><code>${e.id || ''}</code></td>
-    <td>
-      <button
-        type="button"
-        class="entry-del"
-        title="Delete"
-        aria-label="Delete"
-        data-id="${e.id || ''}"
-        data-iso="${e.scheduledAt || ''}"
-      >×</button>
-    </td>`;
+    tr.innerHTML = `
+      <td>${e.timeLocal || (getHM(e).map(n=>String(n).padStart(2,'0')).join(':'))}</td>
+      <td><code>${e.scheduledAt || ''}</code></td>
+      <td><code>${e.notifyAt || ''}</code></td>
+      <td>${e.customerName || e.name || ''}</td>
+      <td title="${e.phone || ''}">${e.phoneDisplay || prettyPhone(e.phone || '')}</td>
+      <td>${e.queueName || e.queueId || ''}</td>
+      <td>${notesSafe}</td>
+      <td><code>${e.id || ''}</code></td>
+      <td>
+        <button
+          type="button"
+          class="entry-del"
+          title="Delete"
+          aria-label="Delete"
+          data-id="${e.id || ''}"
+          data-iso="${e.scheduledAt || ''}"
+        >×</button>
+      </td>`;
     entriesTbody.appendChild(tr);
   }
   entryCount.textContent = String(entries.length);
 }
+
 
 function openModal(h, m, scheduledIsoOverride, displayLabel) {
   selectedSlot = { hour: h, minute: m };
@@ -1241,15 +1264,13 @@ async function loadFromApi(date) {
 
     const url = `${base}/entries?date=${encodeURIComponent(date)}`;
 
-    // Build headers (Authorization will be injected by debugFetch if we have an idToken)
-    const hdrs = {};
-    // Content-Type not needed for GET; debugFetch will log and inject auth
+    // debugFetch will inject Authorization if we have an idToken
     const serverItems = await debugFetch('GET /entries', url, {
       method: 'GET',
-      headers: hdrs
+      headers: {}
     });
 
-    // serverItems should be an array; if the API ever wraps it, handle that too
+    // Server may return an array directly, or wrap it in { items: [...] }
     const itemsArray = Array.isArray(serverItems)
       ? serverItems
       : (serverItems && serverItems.items) || [];
@@ -1265,7 +1286,6 @@ async function loadFromApi(date) {
       date
     );
 
-    // Replace the entries for this date in local state and re-render UI
     replaceDay(date, normalized);
     renderEntries();
     buildSlots();
@@ -1273,9 +1293,6 @@ async function loadFromApi(date) {
     console.error('loadFromApi failed', err);
   }
 }
-
-
-
 
 
 // Shared helper: delete by server id + UTC ISO (used by both tables and timeslot chips)

@@ -2,6 +2,7 @@
   "apiBase": "https://f36ru2h4ua.execute-api.us-east-1.amazonaws.com/prod",
   "defaultTz": "America/Phoenix",
   "defaultTzLabel": "America/Phoenix",
+  "capacityTz": "America/Phoenix",
   "notifyAheadMinutes": 2,
 
   "defaultRole": "Admin",
