@@ -1016,6 +1016,32 @@ for (const e of entries) {
   }
 }
 
+function getDisplayTimeFromEntry(e) {
+  // prefer scheduledAt for precise UTC → local conversion
+  if (e.scheduledAt && typeof labelFromIso === 'function' && typeof currentTz === 'function') {
+    try {
+      const disp = labelFromIso(e.scheduledAt, currentTz());
+      if (disp && disp.hh != null && disp.mm != null) {
+        return `${String(disp.hh).padStart(2, '0')}:${String(disp.mm).padStart(2, '0')}`;
+      }
+    } catch (_) {
+      // ignore; fall through to fallback
+    }
+  }
+
+  // fallback: whatever you already stored as timeLocal or hm/time
+  if (e.timeLocal) return e.timeLocal;
+
+  if (e.hm && Array.isArray(e.hm) && e.hm.length === 2) {
+    return e.hm.map(n => String(n).padStart(2,'0')).join(':');
+  }
+
+  if (e.time) return e.time;
+
+  return '';
+}
+
+
 function renderEntries() {
   const dateStr = dateEl.value;
   const entries = Store.list(dateStr).slice();
@@ -1026,8 +1052,9 @@ function renderEntries() {
   for (const e of entries) {
     const tr = document.createElement('tr');
     const notesSafe = e.notes ? String(e.notes).replace(/</g,'&lt;') : '';
+    const displayTime = getDisplayTimeFromEntry(e);
     tr.innerHTML = `
-      <td>${e.timeLocal || (getHM(e).map(n=>String(n).padStart(2,'0')).join(':'))}</td>
+      <td>${displayTime}</td>
       <td><code>${e.scheduledAt || ''}</code></td>
       <td><code>${e.notifyAt || ''}</code></td>
       <td>${e.customerName || e.name || ''}</td>
