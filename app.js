@@ -1758,10 +1758,26 @@ async function deleteEntry() {
     const day = dateEl && dateEl.value;
     const all = (Store.list && Store.list(day)) || [];
     const entry = all.find(e => e.id === (viewEntryId || editEntryId));
-    if (!entry) { alert('Entry not found locally.'); return; }
+    if (!entry) {
+      alert('Entry not found locally.');
+      return;
+    }
 
     const settings = Store.getSettings();
-    await apiDeleteInline(settings.apiBase, settings.useApi, entry);
+    const id = entry.id;
+
+    // Use scheduledAt as the "current ISO" anchor for date/time
+    const curIso =
+      entry.scheduledAt ||
+      (entry.date && entry.time ? `${entry.date}T${entry.time}:00Z` : '');
+
+    if (!curIso) {
+      console.error('deleteEntry: missing curIso for entry', entry);
+      alert('Cannot delete: entry has no scheduled time.');
+      return;
+    }
+
+    await apiDeleteInline(settings.apiBase, settings.useApi, id, curIso);
 
     // remove from local + refresh UI
     Store.remove(day, entry.id);
@@ -1773,6 +1789,7 @@ async function deleteEntry() {
     alert('API delete failed: ' + (err?.message || err));
   }
 }
+
 
 
 // Fetch the selected date's entries from the API once the page is ready
