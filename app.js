@@ -904,31 +904,37 @@ function buildSlots() {
       return { baseHHMM: hhmm, utcIso, dispHH: disp.hh, dispMM: disp.mm, dispLabel: disp.label, cap: capacityFor(hhmm) };
     }).sort((a,b) => new Date(a.utcIso) - new Date(b.utcIso));
 
-const booked = new Map();
-const perSlot = new Map();
-for (const e of entries) {
-  const entryQueueKey = e.queueKey || 'default';
+    const booked = new Map();
+    const perSlot = new Map();
+    for (const e of entries) {
+      const entryQueueKey = e.queueKey || 'default';
 
-  const matchesQueueKey =
-    entryQueueKey === (qMeta.key || 'default');
+      const matchesQueueKey =
+        entryQueueKey === (qMeta.key || 'default');
 
-  const matchesByArn =
-    e.queueArn && qMeta.arn && e.queueArn === qMeta.arn;
+      const matchesByArn =
+        e.queueArn && qMeta.arn && e.queueArn === qMeta.arn;
 
-  const matchesByName =
-    !e.queueKey && e.queueName && e.queueName === qMeta.name;
+      const matchesByName =
+        !e.queueKey && e.queueName && e.queueName === qMeta.name;
 
-  const sameQueue = matchesQueueKey || matchesByArn || matchesByName;
+      // NEW: if the entry has no explicit routing info,
+      //       treat it as belonging to the current queue
+      const hasExplicitRouting =
+        !!(e.queueKey || e.groupKey || e.queueArn || e.queueName);
 
-  if (!sameQueue || !e.scheduledAt) continue;
+      const sameQueue = hasExplicitRouting
+        ? (matchesQueueKey || matchesByArn || matchesByName)
+        : true;  // legacy entry → show it
 
-  const key = minuteKey(e.scheduledAt);
-  booked.set(key, (booked.get(key) || 0) + 1);
-  const arr = perSlot.get(key) || [];
-  arr.push(e);
-  perSlot.set(key, arr);
-}
+      if (!sameQueue || !e.scheduledAt) continue;
 
+      const key = minuteKey(e.scheduledAt);
+      booked.set(key, (booked.get(key) || 0) + 1);
+      const arr = perSlot.get(key) || [];
+      arr.push(e);
+      perSlot.set(key, arr);
+    }
 
     for (const s of slotObjs) {
       if (!s.cap) continue;
